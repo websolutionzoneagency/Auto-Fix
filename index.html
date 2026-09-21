@@ -352,6 +352,7 @@
   .modal {
     background: var(--paper-raised); border: 1px solid var(--line); border-radius: var(--radius);
     box-shadow: var(--shadow); width: 100%; max-width: 380px; padding: 20px;
+    max-height: calc(100vh - 40px); overflow-y: auto;     /* tall forms scroll inside the dialog */
   }
   .modal h3 { font-size: 15px; margin-bottom: 14px; }
   .modal label { display: block; font-size: 11.5px; color: var(--muted); margin: 12px 0 5px; }
@@ -515,6 +516,50 @@
   .site-meta .meta-item.stale b { color: var(--coral); }
   @media (max-width: 860px) { .nav-scroll { max-height: none; } main { padding: 18px 16px 48px; } }
   .nav-item .trunc { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; text-align: left; }
+  /* ================= automation ================= */
+  .tier { font-family: var(--font-mono); font-size: 9.5px; letter-spacing: .04em; text-transform: uppercase; border-radius: 20px; padding: 1px 6px; flex: none; border: 1px solid var(--line); color: var(--muted); }
+  .tier.auto { border-color: var(--teal); color: var(--teal); }
+  .tier.check { border-color: var(--amber); color: var(--amber); }
+  .verdict { font-family: var(--font-mono); font-size: 10px; border-radius: 20px; padding: 1px 7px; font-weight: 600; }
+  .verdict.pass { background: var(--teal-soft); color: var(--teal); }
+  .verdict.fail { background: var(--coral-soft); color: var(--coral); }
+  .verdict.unknown { background: var(--line-soft); color: var(--muted); }
+  .item-sub .scan-summary { color: var(--ink-soft); }
+  .item-sub .fix-now { background: var(--accent-soft); color: var(--accent-ink); border: none; border-radius: 5px; padding: 2px 8px; font-size: 11px; font-weight: 600; cursor: pointer; font-family: var(--font-body); }
+  .conn-status { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0 4px; }
+  .conn-status .cap { font-family: var(--font-mono); font-size: 10.5px; padding: 2px 8px; border-radius: 20px; background: var(--line-soft); color: var(--muted); }
+  .conn-status .cap.ok { background: var(--teal-soft); color: var(--teal); }
+  .conn-status .cap.bad { background: var(--coral-soft); color: var(--coral); }
+  .conn-error { font-size: 12px; color: var(--coral); margin-top: 6px; white-space: pre-wrap; }
+  .modal .note { font-size: 11.5px; color: var(--muted); margin-top: 6px; line-height: 1.5; }
+  .modal .switch { display: flex; align-items: center; gap: 8px; font-size: 12.5px; margin-top: 12px; cursor: pointer; }
+  .modal .switch input { width: auto; }
+  .modal.wide { max-width: 720px; }
+  .plan-op { display: flex; gap: 10px; padding: 10px 0; border-bottom: 1px solid var(--line-soft); font-size: 12.5px; align-items: flex-start; }
+  .plan-op:last-child { border-bottom: none; }
+  .plan-op input[type="checkbox"] { width: auto; margin-top: 3px; }
+  .plan-op .diff { font-family: var(--font-mono); font-size: 11px; margin-top: 4px; display: grid; gap: 2px; }
+  .plan-op .diff .del { color: var(--coral); overflow-wrap: anywhere; } .plan-op .diff .add { color: var(--teal); overflow-wrap: anywhere; }
+  .plan-op .flag { font-size: 10.5px; color: var(--amber); margin-left: 6px; }
+  .plan-blocked { font-size: 12px; color: var(--muted); padding: 8px 0; border-top: 1px dashed var(--line); margin-top: 8px; }
+  .plan-scroll { max-height: 48vh; overflow-y: auto; margin-top: 10px; }
+  .auto-table td.mono { font-size: 11.5px; }
+  .auto-table .summary { color: var(--ink-soft); font-size: 12.5px; }
+  .auto-table .details { font-size: 11px; color: var(--muted); margin-top: 3px; }
+  .auto-table details summary { cursor: pointer; }
+  .auto-table .op-row td { font-size: 12px; }
+  .auto-table .status-applied { color: var(--teal); } .auto-table .status-reverted { color: var(--muted); } .auto-table .status-failed { color: var(--coral); }
+  .scan-bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 12.5px; color: var(--muted); padding: 10px 14px; border: 1px dashed var(--line); border-radius: 8px; margin-bottom: 14px; }
+  .scan-bar.paused { border-color: var(--coral); color: var(--coral); }
+  .auth-overlay { position: fixed; inset: 0; background: var(--paper); display: none; align-items: center; justify-content: center; z-index: 100; padding: 20px; }
+  .auth-overlay.open { display: flex; }
+  .auth-card { width: 100%; max-width: 380px; background: var(--paper-raised); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); padding: 26px; }
+  .auth-card h2 { font-size: 18px; margin-bottom: 4px; } .auth-card p { font-size: 12.5px; color: var(--muted); margin: 0 0 14px; }
+  .auth-card label { display: block; font-size: 11.5px; color: var(--muted); margin: 12px 0 5px; }
+  .auth-card input { width: 100%; font-family: var(--font-body); font-size: 13px; color: var(--ink); background: var(--paper); border: 1px solid var(--line); border-radius: 7px; padding: 8px 10px; }
+  .auth-card .row { display: flex; gap: 8px; margin-top: 16px; }
+  .auth-card .err { color: var(--coral); font-size: 12px; margin-top: 10px; min-height: 1em; }
+  .sidebar-foot .btn-mini { border-color: rgba(255,255,255,.2); background: rgba(255,255,255,.06); color: rgba(240,237,228,.8); }
 </style>
 </head>
 <body>
@@ -552,6 +597,7 @@
     <div class="sidebar-foot">
       <div class="avatar" id="agency-avatar" aria-hidden="true">—</div>
       <div id="agency-user">—</div>
+      <button class="btn-mini" id="sign-out-btn" data-action="sign-out" hidden>Sign out</button>
       <button class="theme-toggle" id="theme-toggle" data-action="theme" title="Toggle theme" aria-label="Toggle colour theme">◐</button>
     </div>
   </aside>
@@ -660,6 +706,7 @@
         <button class="tab" role="tab" data-action="tab" data-sub="fixreq">Fix Requests <span class="num" id="tab-count-fixreq" style="color:var(--muted);font-size:11px;"></span></button>
         <button class="tab" role="tab" data-action="tab" data-sub="siteflags">Flags <span class="num" id="tab-count-flags" style="color:var(--muted);font-size:11px;"></span></button>
         <button class="tab" role="tab" data-action="tab" data-sub="log">Audit Log</button>
+        <button class="tab" role="tab" data-action="tab" data-sub="automation" id="tab-automation">Automation <span class="num" id="tab-count-auto" style="color:var(--muted);font-size:11px;"></span></button>
       </div>
 
       <div class="subview active" id="sub-checklist">
@@ -701,6 +748,10 @@
 
       <div class="subview" id="sub-log">
         <div class="card"><div class="card-body" id="audit-log-body"></div></div>
+      </div>
+
+      <div class="subview" id="sub-automation">
+        <div id="automation-body"></div>
       </div>
     </section>
 
@@ -760,7 +811,7 @@
 
 <!-- Add / edit site -->
 <div class="modal-backdrop" id="site-modal">
-  <form class="modal" id="site-form" role="dialog" aria-modal="true" aria-labelledby="site-modal-title">
+  <form class="modal wide" id="site-form" role="dialog" aria-modal="true" aria-labelledby="site-modal-title">
     <h3 id="site-modal-title">Add a site</h3>
     <input type="hidden" id="site-form-id"><input type="hidden" id="site-form-client">
     <label for="site-form-name">Site name</label>
@@ -774,6 +825,43 @@
     </div>
     <label for="site-form-notes">Notes</label>
     <textarea id="site-form-notes" placeholder="Anything the team should know about this site"></textarea>
+
+    <div id="site-connection" hidden>
+      <div class="fieldset-title">Connection</div>
+      <div class="note" id="conn-mode-note"></div>
+      <div id="conn-status" class="conn-status"></div>
+      <div id="conn-fields">
+        <label for="conn-base-url">Site URL</label>
+        <input type="url" id="conn-base-url" placeholder="https://example.com" autocomplete="off">
+        <div class="grid2">
+          <div><label for="conn-username">WordPress username</label><input type="text" id="conn-username" autocomplete="off"></div>
+          <div><label for="conn-app-password">Application password</label><input type="password" id="conn-app-password" placeholder="xxxx xxxx xxxx xxxx" autocomplete="new-password"></div>
+        </div>
+        <div class="grid2">
+          <div><label for="conn-woo-key">WooCommerce consumer key <span style="font-weight:400">(optional)</span></label><input type="text" id="conn-woo-key" autocomplete="off"></div>
+          <div><label for="conn-woo-secret">WooCommerce consumer secret</label><input type="password" id="conn-woo-secret" autocomplete="new-password"></div>
+        </div>
+        <div class="note">Create the application password under <b>Users → Profile → Application Passwords</b> on the site. It is encrypted before it is stored and is never shown again. Install the companion plugin (<code>wordpress-plugin/</code>) for revision and debug checks and SEO-meta fixes.</div>
+      </div>
+      <div class="fieldset-title">Fix inputs</div>
+      <div class="note">What the automatic fixes need from you. Leave blank to keep those fixes blocked.</div>
+      <div class="grid2">
+        <div><label for="conn-org-name">Organization name (schema)</label><input type="text" id="conn-org-name" autocomplete="off"></div>
+        <div><label for="conn-author-name">Default real author name</label><input type="text" id="conn-author-name" placeholder="replaces “admin”" autocomplete="off"></div>
+      </div>
+      <label for="conn-prefixes">Legacy prefix → replacement (one per line)</label>
+      <textarea id="conn-prefixes" placeholder="/shop/old-prefix/ => /product/"></textarea>
+      <label for="conn-allowed">Allowed outbound domains (comma-separated)</label>
+      <input type="text" id="conn-allowed" placeholder="gov.ae, who.int" autocomplete="off">
+      <label class="switch"><input type="checkbox" id="conn-paused" aria-label="Pause all writes to this site"> <b>Pause all writes to this site</b> (kill switch)</label>
+      <div class="conn-error" id="conn-error"></div>
+      <div class="row-actions" style="justify-content:flex-start;margin-top:12px">
+        <button type="button" class="link-btn" data-action="conn-save">Save &amp; test connection</button>
+        <button type="button" class="btn-mini" data-action="conn-test" id="conn-test-btn" hidden>Test again</button>
+        <button type="button" class="btn-mini danger" data-action="conn-disconnect" id="conn-disconnect-btn" hidden>Disconnect</button>
+      </div>
+    </div>
+
     <div class="modal-actions">
       <button type="button" class="btn-mini danger left" id="site-delete-btn" data-action="delete-site" hidden>Delete site</button>
       <button type="button" class="btn-ghost" data-action="modal-close">Cancel</button>
@@ -798,6 +886,34 @@
       <button type="button" class="btn-ghost" data-action="modal-close">Cancel</button>
       <button type="submit" class="link-btn">Queue fix</button>
     </div>
+  </form>
+</div>
+
+<!-- Fix plan: review the diff, approve, apply -->
+<div class="modal-backdrop" id="plan-modal">
+  <form class="modal wide" id="plan-form" role="dialog" aria-modal="true" aria-labelledby="plan-modal-title">
+    <h3 id="plan-modal-title">Review changes</h3>
+    <div class="item-preview" id="plan-head"></div>
+    <div class="plan-scroll" id="plan-ops"></div>
+    <div id="plan-blocked"></div>
+    <div class="note" id="plan-note"></div>
+    <div class="modal-actions">
+      <button type="button" class="btn-ghost" data-action="modal-close">Cancel</button>
+      <button type="submit" class="link-btn" id="plan-apply-btn">Apply</button>
+    </div>
+  </form>
+</div>
+
+<div class="auth-overlay" id="auth-overlay">
+  <form class="auth-card" id="auth-form">
+    <h2>Sign in to RankOps</h2>
+    <p>Use the email your agency owner added you with.</p>
+    <label for="auth-email">Email</label>
+    <input type="email" id="auth-email" required autocomplete="username">
+    <label for="auth-password">Password <span style="font-weight:400">(leave blank for a magic link)</span></label>
+    <input type="password" id="auth-password" autocomplete="current-password">
+    <div class="err" id="auth-error"></div>
+    <div class="row"><button type="submit" class="link-btn" id="auth-submit">Sign in</button></div>
   </form>
 </div>
 

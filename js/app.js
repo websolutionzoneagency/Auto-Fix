@@ -5,10 +5,16 @@ import { CHECKLIST, TOTAL_ITEMS, CRITICAL } from './checklist.js';
 import * as M from './model.js';
 import { createStore, makeClient, makeSite, makeFlag, makeFixReq, emptyState } from './store.js';
 import { createLocalAdapter } from './adapters/local.js';
-import { createApiAdapter } from './adapters/api.js';
+import { createApiAdapter, ApiError } from './adapters/api.js';
+import { createAuth } from './auth.js';
+import { tierOf, TIER_LABEL, ITEM_CHECKS, ITEM_FIXES, FIX_BLOCKED_REASON, tierCounts } from './automation.js';
 import { demoState } from './seed.js';
 
-const adapter = CONFIG.backend === 'api' ? createApiAdapter(CONFIG) : createLocalAdapter({ key: CONFIG.storageKey });
+const auth = createAuth(CONFIG);
+const adapter = CONFIG.backend === 'api'
+  ? createApiAdapter({ ...CONFIG, getToken: () => auth.getToken() })
+  : createLocalAdapter({ key: CONFIG.storageKey });
+const API = adapter.name === 'api';                 // connections, scans and fixes exist only with the backend
 const store = createStore({ adapter, seed: demoState });
 
 const $ = (sel, root = document) => root.querySelector(sel);
@@ -24,12 +30,15 @@ const ui = {
   search: '', flagFilter: 'all', showResolved: false,
   checklistFilter: 'all', openCats: new Set(), editingEvidence: null,
   tmplSearch: '',
+  // per-site automation data from the API (never persisted in the console state)
+  connection: {}, findings: {}, fixOps: {}, scanJob: {}, loaded: {}, busy: {},
 };
+const SUBS_ALL = ['checklist', 'fixreq', 'siteflags', 'log', 'automation'];
 
 /* ---------- routing (#/dashboard, #/site/<id>/<tab>) ---------- */
 function routeFromHash() {
   const [view, a, b] = location.hash.replace(/^#\/?/, '').split('/');
-  if (view === 'site' && a && store.state.sites[a]) { ui.view = 'site'; ui.siteId = a; if (SUBS.includes(b)) ui.sub = b; }
+  if (view === 'site' && a && store.state.sites[a]) { ui.view = 'site'; ui.siteId = a; if (SUBS_ALL.includes(b)) ui.sub = b; }
   else if (VIEWS.includes(view) && view !== 'site') ui.view = view;
   else ui.view = 'dashboard';
 }
@@ -243,9 +252,15 @@ function renderSite(s) {
   $$('.tab[data-sub]').forEach(t => { const on = t.dataset.sub === ui.sub; t.classList.toggle('active', on); t.setAttribute('aria-selected', on ? 'true' : 'false'); });
   $$('.subview').forEach(v => v.classList.toggle('active', v.id === 'sub-' + ui.sub));
 
+  const fails = (ui.findings[site.id] || []).filter(f => f.verdict === 'fail').length;
+  $('#tab-count-auto').textContent = fails ? `(${fails})` : '';
+  $('#tab-automation').hidden = !API;
+  if (API) ensureAutomationData(site.id);
+
   if (ui.sub === 'checklist') renderChecklist(site, reqs);
   else if (ui.sub === 'fixreq') renderKanban(reqs);
   else if (ui.sub === 'siteflags') renderSiteFlags(s, flags);
+  else if (ui.sub === 'automation') renderAutomation(s, site);
   else renderLog(s, site);
 }
 
@@ -298,7 +313,16 @@ function itemRow(site, it, openReq) {
     } else {
       sub += `<button class="ev-btn" data-action="evidence-edit" data-item="${it.id}">+ evidence link</button>`;
     }
-  } else if (st === 'pending') {
+  }
+  const tier = tierOf(it.id);
+  const finding = API ? findingForItem(it.id) : null;
+  if (finding) {
+    sub += `<span class="verdict ${esc(finding.verdict)}">${finding.verdict === 'unknown' ? 'not checked' : finding.verdict}</span><span class="scan-summary">${esc(finding.summary || '')}</span>`;
+    if (finding.verdict === 'fail' && tier === 'auto') sub += `<button type="button" class="fix-now" data-action="fix-plan" data-finding="${esc(finding.id)}">Fix →</button>`;
+    else if (finding.verdict === 'fail' && FIX_BLOCKED_REASON[it.id]) sub += `<span title="${esc(FIX_BLOCKED_REASON[it.id])}" style="cursor:help">why manual?</span>`;
+    if (finding.evidenceUrl && st !== 'done') sub += `<a href="${esc(finding.evidenceUrl)}" target="_blank" rel="noopener">evidence ↗</a>`;
+  }
+  if (st === 'pending' && !finding) {
     if (openReq) {
       const m = M.reqStatusMeta(openReq.status);
       sub += `<span class="pill ${m.cls}">${esc(m.label)}</span><span class="prio ${openReq.priority}">${openReq.priority.toUpperCase()}</span><button class="ev-btn" data-action="tab" data-sub="fixreq">view in queue</button>`;
@@ -313,6 +337,7 @@ function itemRow(site, it, openReq) {
         <span class="item-code">${esc(it.id)}</span>
         <span class="item-label${it.hint ? ' hinted' : ''}" data-action="item-cycle" data-item="${it.id}"${it.hint ? ` title="${esc(it.hint)}"` : ''}>${esc(it.label)}</span>
         ${it.crit ? '<span class="crit-badge">Critical</span>' : ''}
+        ${tier !== 'manual' ? `<span class="tier ${tier}" title="${tier === 'auto' ? 'The scanner decides this and can fix it' : 'The scanner decides this; fixing it needs you'}">${TIER_LABEL[tier]}</span>` : ''}
       </div>
       ${sub ? `<div class="item-sub">${sub}</div>` : ''}
     </div>
@@ -365,14 +390,15 @@ function renderLog(s, site) {
 
 function renderTemplates() {
   const q = ui.tmplSearch.trim().toLowerCase();
-  $('#tmpl-sub').textContent = `${TOTAL_ITEMS} items in ${CHECKLIST.length} categories · ${CRITICAL.size} critical (each open one costs a site 6 health points)`;
+  const tc = tierCounts(CHECKLIST);
+  $('#tmpl-sub').textContent = `${TOTAL_ITEMS} items in ${CHECKLIST.length} categories · ${CRITICAL.size} critical · ${tc.auto} auto-fix · ${tc.check} auto-check · ${tc.manual} manual`;
   $('#templates-body').innerHTML = CHECKLIST.map((cat, i) => {
     const items = cat.items.filter(it => !q || it.id.toLowerCase().includes(q) || it.label.toLowerCase().includes(q) || (it.hint || '').toLowerCase().includes(q));
     if (q && !items.length) return '';
     const crit = cat.items.filter(x => x.crit).length;
     return `<div class="card">
       <div class="card-head"><h3>${String(i + 1).padStart(2, '0')} · ${esc(cat.title)}</h3><span class="hint">${items.length} item${items.length === 1 ? '' : 's'}${crit ? ` · ${crit} critical` : ''}</span></div>
-      <div class="card-body">${items.map(it => `<div class="tmpl-item"><span class="tmpl-code">${esc(it.id)}</span><span class="tmpl-label">${esc(it.label)}${it.hint ? `<span class="tmpl-hint">${esc(it.hint)}</span>` : ''}</span>${it.crit ? '<span class="crit-badge">Critical</span>' : ''}</div>`).join('')}</div>
+      <div class="card-body">${items.map(it => `<div class="tmpl-item"><span class="tmpl-code">${esc(it.id)}</span><span class="tmpl-label">${esc(it.label)}${it.hint ? `<span class="tmpl-hint">${esc(it.hint)}</span>` : ''}</span>${it.crit ? '<span class="crit-badge">Critical</span>' : ''}${tierOf(it.id) !== 'manual' ? `<span class="tier ${tierOf(it.id)}">${TIER_LABEL[tierOf(it.id)]}</span>` : ''}</div>`).join('')}</div>
     </div>`;
   }).join('') || '<div class="empty-note big">No items match.</div>';
   const mode = $('#backend-mode'); mode.textContent = adapter.name; mode.classList.toggle('api', adapter.name === 'api');
@@ -402,6 +428,8 @@ function openSiteModal({ siteId, clientId }) {
   $('#site-form-notes').value = site ? site.notes : '';
   $('#site-delete-btn').hidden = !site;
   $('#site-form-submit').textContent = site ? 'Save' : 'Add site';
+  $('#site-connection').hidden = !(API && site);
+  if (API && site) fillConnectionForm(site.id);
   openModal('site-modal');
 }
 $$('.modal-backdrop').forEach(m => m.addEventListener('mousedown', e => { if (e.target === m) closeModals(); }));
@@ -558,9 +586,18 @@ document.addEventListener('click', e => {
     case 'flag-delete': if (confirm('Delete this flag?')) store.dispatch('flag/remove', { id: d.flag }); break;
     case 'record-audit':
       if (!s.sites[ui.siteId]) break;
+      if (API && ui.connection[ui.siteId]?.connected) { runScan(ui.siteId); break; }
       store.dispatch('audit/record', { siteId: ui.siteId });
-      toast('Audit date recorded. Nothing was scanned — connect a CMS connector for live checks.');
+      toast(API ? 'Audit date recorded. Connect the site (Site settings) to scan it for real.' : 'Audit date recorded. Nothing was scanned — the local build has no site connection.');
       break;
+    case 'scan-now': if (s.sites[ui.siteId]) runScan(ui.siteId, d.checks ? d.checks.split(',') : []); break;
+    case 'conn-save': saveConnection(); break;
+    case 'conn-test': testConnection(); break;
+    case 'conn-disconnect': disconnectSite(); break;
+    case 'fix-plan': openPlan(d.finding); break;
+    case 'fix-revert': revertOps([d.op]); break;
+    case 'toggle-pause': togglePause(!ui.connection[ui.siteId]?.paused); break;
+    case 'sign-out': auth.signOut().then(() => location.reload()); break;
     case 'theme': store.dispatch('theme/set', { theme: s.theme === null ? 'dark' : (s.theme === 'dark' ? 'light' : null) }); break;
     case 'export': exportJson(s); break;
     case 'import': $('#import-input').click(); break;
@@ -584,10 +621,249 @@ function exportJson(s) {
   toast('Export downloaded.');
 }
 
+/* ================= automation (API backend only) ================= */
+function findingForItem(itemId) {
+  const check = ITEM_CHECKS[itemId]; if (!check) return null;
+  return (ui.findings[ui.siteId] || []).find(f => f.checkId === check) || null;
+}
+async function api(method, path, body) {
+  try { return await adapter.call(method, path, body); }
+  catch (e) { toast(e instanceof ApiError ? e.message : 'Request failed: ' + e.message); throw e; }
+}
+/** Load connection + findings + fix history for a site once; re-render when they land. */
+function ensureAutomationData(siteId, force = false) {
+  if (!API) return;
+  if (!force && ui.loaded[siteId]) return;
+  ui.loaded[siteId] = true;
+  Promise.all([
+    adapter.call('GET', `/sites/${siteId}/connection`).catch(() => ({ connected: false })),
+    adapter.call('GET', `/sites/${siteId}/findings`).catch(() => ({ findings: [] })),
+    adapter.call('GET', `/sites/${siteId}/fixes`).catch(() => ({ operations: [] })),
+    adapter.call('GET', `/sites/${siteId}/scan`).catch(() => ({ job: null })),
+  ]).then(([conn, f, ops, job]) => {
+    ui.connection[siteId] = conn; ui.findings[siteId] = f.findings; ui.fixOps[siteId] = ops.operations; ui.scanJob[siteId] = job.job;
+    if (ui.view === 'site' && ui.siteId === siteId) render();
+  });
+}
+function refreshAutomation(siteId) { ensureAutomationData(siteId, true); }
+
+function renderAutomation(s, site) {
+  const conn = ui.connection[site.id];
+  const findings = ui.findings[site.id] || [];
+  const ops = ui.fixOps[site.id] || [];
+  const job = ui.scanJob[site.id];
+  if (!conn) { $('#automation-body').innerHTML = '<div class="empty-note">Loading…</div>'; return; }
+  if (!conn.connected) {
+    $('#automation-body').innerHTML = `<div class="empty-note big">This site is not connected yet.<br><br><button class="link-btn" data-action="edit-site">Connect it in Site settings</button></div>`;
+    return;
+  }
+  const busy = ui.busy['scan:' + site.id];
+  const running = job && (job.status === 'queued' || job.status === 'running');
+  const bar = `<div class="scan-bar${conn.paused ? ' paused' : ''}">
+      ${conn.paused ? '<b>⏸ Writes are paused for this site.</b>' : `Connected to <b>${esc(conn.baseUrl)}</b>${conn.seoPlugin ? ' · ' + esc(conn.seoPlugin) : ''}${conn.capabilities?.companionPlugin ? ' · companion plugin' : ' · <span title="Install wordpress-plugin/ for revision and debug checks">no companion plugin</span>'}`}
+      ${job ? ` · last scan ${esc(job.status)} ${M.relTime(job.finishedAt || job.createdAt)}${running ? ` (${job.pending.length} checks pending — Cron continues them)` : ''}` : ' · never scanned'}
+      <span class="spacer"></span>
+      <button class="btn-mini" data-action="toggle-pause">${conn.paused ? 'Resume writes' : 'Pause writes'}</button>
+      <button class="link-btn" data-action="scan-now" ${busy ? 'disabled' : ''}>${busy ? 'Scanning…' : (running ? 'Re-check now' : 'Scan now')}</button>
+    </div>`;
+  const rows = findings.length ? findings.map(f => {
+    const canFix = f.verdict === 'fail' && f.fixId;
+    const reason = f.verdict === 'fail' && !f.fixId ? (FIX_BLOCKED_REASON[f.itemIds[0]] || '') : '';
+    return `<tr>
+      <td class="mono">${esc(f.checkId)}<div class="details">${f.itemIds.map(esc).join(', ')}</div></td>
+      <td><span class="verdict ${esc(f.verdict)}">${f.verdict === 'unknown' ? 'not checked' : f.verdict}</span></td>
+      <td><div class="summary">${esc(f.summary || '')}</div>${f.note ? `<div class="details">${esc(f.note)}</div>` : ''}
+        ${f.details && f.details.length ? `<details><summary class="details">${f.details.length} detail${f.details.length === 1 ? '' : 's'}</summary><div class="details">${f.details.slice(0, 25).map(d => `<div>${esc(d.url || d.name || d.detail || '')}${d.url && d.detail ? ' — ' + esc(d.detail) : ''}</div>`).join('')}${f.details.length > 25 ? `<div>… ${f.details.length - 25} more</div>` : ''}</div></details>` : ''}
+      </td>
+      <td class="mono">${M.relTime(f.createdAt)}</td>
+      <td>${f.evidenceUrl ? `<a href="${esc(f.evidenceUrl)}" target="_blank" rel="noopener" class="btn-mini">evidence ↗</a> ` : ''}
+          ${canFix ? `<button class="fix-now" data-action="fix-plan" data-finding="${esc(f.id)}">Fix →</button>` : (reason ? `<span class="tier check" title="${esc(reason)}" style="cursor:help">manual</span>` : '')}</td>
+    </tr>`;
+  }).join('') : `<tr><td colspan="5" class="empty-note">No scan results yet. ${running ? 'A scan is in progress.' : 'Click <b>Scan now</b>.'}</td></tr>`;
+  const opRows = ops.length ? ops.slice(0, 100).map(o => `<tr class="op-row">
+      <td class="mono">${esc(o.fixId)}${o.itemId ? `<div class="details">${esc(o.itemId)}</div>` : ''}</td>
+      <td class="status-${esc(o.status)}">${esc(o.status)}${o.error ? `<div class="details" style="color:var(--coral)">${esc(o.error)}</div>` : ''}</td>
+      <td>${esc(o.describe || '')}${o.target?.url ? `<div class="details">${esc(o.target.url)}</div>` : ''}</td>
+      <td class="mono">${M.relTime(o.appliedAt || o.createdAt)}</td>
+      <td>${o.status === 'applied' && !o.irreversible ? `<button class="btn-mini danger" data-action="fix-revert" data-op="${esc(o.id)}">Revert</button>` : (o.irreversible && o.status === 'applied' ? '<span class="tier" title="This change cannot be undone">irreversible</span>' : '')}</td>
+    </tr>`).join('') : '<tr><td colspan="5" class="empty-note">No fixes applied yet.</td></tr>';
+  $('#automation-body').innerHTML = bar + `
+    <div class="card"><div class="card-head"><h3>Scan results</h3><span class="hint">${findings.filter(f => f.verdict === 'fail').length} failing · ${findings.filter(f => f.verdict === 'pass').length} passing · ${findings.filter(f => f.verdict === 'unknown').length} could not run</span></div>
+      <div class="card-body"><table class="auto-table"><thead><tr><th>Check</th><th>Verdict</th><th>Result</th><th>When</th><th></th></tr></thead><tbody>${rows}</tbody></table></div></div>
+    <div class="card"><div class="card-head"><h3>Applied fixes</h3><span class="hint">every change stores what it replaced — revert restores it</span></div>
+      <div class="card-body"><table class="auto-table"><thead><tr><th>Fix</th><th>Status</th><th>Change</th><th>When</th><th></th></tr></thead><tbody>${opRows}</tbody></table></div></div>`;
+}
+
+async function runScan(siteId, checks = []) {
+  const key = 'scan:' + siteId;
+  if (ui.busy[key]) return;
+  ui.busy[key] = true; render();
+  try {
+    const r = await api('POST', `/sites/${siteId}/scan`, { checks });
+    ui.scanJob[siteId] = r.job; ui.findings[siteId] = r.findings;
+    await adapter.sync();                                       // pull the scanner's item/log actions immediately
+    const ran = r.job.ran || [];
+    const pending = r.job.pending?.length || 0;
+    toast(`Scan ${pending ? 'started' : 'complete'} — ${ran.filter(x => x.verdict === 'pass').length} pass · ${ran.filter(x => x.verdict === 'fail').length} fail · ${ran.filter(x => x.verdict === 'unknown').length} could not run${pending ? ` · ${pending} pending` : ''}`);
+    if (pending) pollScan(siteId);
+  } catch { /* toasted */ }
+  finally { ui.busy[key] = false; refreshAutomation(siteId); render(); }
+}
+function pollScan(siteId, tries = 0) {
+  if (tries > 40) return;
+  setTimeout(async () => {
+    try {
+      const { job } = await adapter.call('GET', `/sites/${siteId}/scan`);
+      ui.scanJob[siteId] = job;
+      if (job && (job.status === 'queued' || job.status === 'running')) return pollScan(siteId, tries + 1);
+      await adapter.sync(); refreshAutomation(siteId); toast('Scan finished.');
+    } catch { /* ignore */ }
+  }, 15000);
+}
+
+function fillConnectionForm(siteId) {
+  const conn = ui.connection[siteId];
+  const status = $('#conn-status'), fields = $('#conn-fields');
+  $('#conn-error').textContent = '';
+  $('#conn-mode-note').textContent = auth.mode === 'supabase' ? '' : 'Single-agency mode (static API token).';
+  if (!conn) { status.innerHTML = '<span class="cap">loading…</span>'; ensureAutomationData(siteId, true); return; }
+  const cap = conn.capabilities || {};
+  status.innerHTML = conn.connected
+    ? `<span class="cap ok">connected</span><span class="cap ${cap.restOk ? 'ok' : 'bad'}">REST</span><span class="cap ${cap.authOk ? 'ok' : 'bad'}">auth</span><span class="cap ${cap.wooOk ? 'ok' : ''}">WooCommerce${cap.wooOk ? '' : ' —'}</span><span class="cap ${cap.seoPlugin ? 'ok' : 'bad'}">${esc(cap.seoPlugin || 'no SEO plugin')}</span><span class="cap ${cap.companionPlugin ? 'ok' : ''}">companion plugin${cap.companionPlugin ? '' : ' missing'}</span>${cap.user ? `<span class="cap">as ${esc(cap.user.name)}</span>` : ''}${conn.paused ? '<span class="cap bad">writes paused</span>' : ''}`
+    : '<span class="cap">not connected</span>';
+  fields.hidden = false;
+  $('#conn-base-url').value = conn.baseUrl || '';
+  $('#conn-username').value = conn.capabilities?.user?.slug || '';
+  $('#conn-app-password').value = ''; $('#conn-app-password').placeholder = conn.connected ? '•••• (stored, encrypted) — leave blank to keep' : 'xxxx xxxx xxxx xxxx';
+  $('#conn-woo-key').value = ''; $('#conn-woo-secret').value = '';
+  const st = conn.settings || {};
+  $('#conn-org-name').value = st.organizationName || '';
+  $('#conn-author-name').value = st.defaultAuthorName || '';
+  $('#conn-prefixes').value = Object.entries(st.prefixReplacements || {}).map(([a, b]) => `${a} => ${b}`).join('\n');
+  $('#conn-allowed').value = (st.allowedDomains || []).join(', ');
+  $('#conn-paused').checked = !!conn.paused;
+  $('#conn-test-btn').hidden = !conn.connected;
+  $('#conn-disconnect-btn').hidden = !conn.connected;
+}
+function readFixInputs() {
+  const prefixReplacements = {};
+  for (const line of $('#conn-prefixes').value.split('\n')) {
+    const m = line.split('=>').map(x => x.trim()); if (m.length === 2 && m[0] && m[1]) prefixReplacements[m[0]] = m[1];
+  }
+  return {
+    organizationName: $('#conn-org-name').value.trim() || undefined,
+    siteUrl: $('#conn-base-url').value.trim() || undefined,
+    defaultAuthorName: $('#conn-author-name').value.trim() || undefined,
+    prefixReplacements, legacyPrefixes: Object.keys(prefixReplacements),
+    allowedDomains: $('#conn-allowed').value.split(',').map(x => x.trim()).filter(Boolean),
+  };
+}
+async function saveConnection() {
+  const siteId = $('#site-form-id').value; if (!siteId) return;
+  const err = $('#conn-error'); err.textContent = '';
+  const conn = ui.connection[siteId] || {};
+  const baseUrl = $('#conn-base-url').value.trim();
+  const username = $('#conn-username').value.trim(), appPassword = $('#conn-app-password').value.trim();
+  const settings = readFixInputs();
+  try {
+    if (appPassword || !conn.connected) {
+      if (!baseUrl || !username || !appPassword) { err.textContent = 'Site URL, username and application password are all required to connect.'; return; }
+      const credentials = { username, appPassword };
+      if ($('#conn-woo-key').value.trim()) { credentials.wooKey = $('#conn-woo-key').value.trim(); credentials.wooSecret = $('#conn-woo-secret').value.trim(); }
+      ui.connection[siteId] = await adapter.call('PUT', `/sites/${siteId}/connection`, { platform: 'wordpress', baseUrl, credentials, settings });
+      toast('Connected. Credentials encrypted and stored.');
+    } else {
+      ui.connection[siteId] = await adapter.call('PATCH', `/sites/${siteId}/settings`, settings);
+      toast('Fix inputs saved.');
+    }
+    const wantPaused = $('#conn-paused').checked;
+    if (wantPaused !== !!ui.connection[siteId].paused) ui.connection[siteId] = await adapter.call('POST', `/sites/${siteId}/pause`, { paused: wantPaused });
+    await adapter.sync(); fillConnectionForm(siteId); render();
+  } catch (e) { err.textContent = e.message; }
+}
+async function testConnection() {
+  const siteId = $('#site-form-id').value; const err = $('#conn-error'); err.textContent = 'Testing…';
+  try { const r = await adapter.call('POST', `/sites/${siteId}/connection/test`); ui.connection[siteId] = r; err.textContent = r.test.ok ? '' : r.test.errors.join('\n'); fillConnectionForm(siteId); }
+  catch (e) { err.textContent = e.message; }
+}
+async function disconnectSite() {
+  const siteId = $('#site-form-id').value;
+  if (!confirm('Disconnect this site? Stored credentials are deleted. Scan history is kept.')) return;
+  try { await api('DELETE', `/sites/${siteId}/connection`); ui.connection[siteId] = { connected: false }; fillConnectionForm(siteId); render(); toast('Disconnected.'); } catch { /* toasted */ }
+}
+async function togglePause(paused) {
+  const siteId = ui.siteId;
+  try { ui.connection[siteId] = await api('POST', `/sites/${siteId}/pause`, { paused }); await adapter.sync(); render(); toast(paused ? 'Writes paused.' : 'Writes resumed.'); } catch { /* toasted */ }
+}
+
+let currentPlan = null;
+async function openPlan(findingId) {
+  const siteId = ui.siteId;
+  try {
+    const { plan } = await api('POST', `/sites/${siteId}/fixes/plan`, { findingId });
+    currentPlan = { ...plan, siteId };
+    const f = (ui.findings[siteId] || []).find(x => x.id === findingId);
+    $('#plan-modal-title').textContent = plan.label;
+    $('#plan-head').innerHTML = `<b>${esc(plan.itemId)}</b> ${esc(M.itemLabel(plan.itemId))}${f ? ` — <span style="color:var(--muted)">${esc(f.summary)}</span>` : ''}`;
+    $('#plan-ops').innerHTML = plan.ops.length ? plan.ops.map((op, i) => `<label class="plan-op"><input type="checkbox" name="op" value="${i}" checked>
+        <div style="flex:1"><div>${esc(op.describe)}${op.lowConfidence ? '<span class="flag">derived — check it</span>' : ''}${op.irreversible ? '<span class="flag">irreversible</span>' : ''}</div>
+        ${op.target?.url ? `<div class="details" style="font-size:11px;color:var(--muted)">${esc(op.target.url)}</div>` : ''}
+        <div class="diff"><span class="del">− ${esc(short(op.before))}</span><span class="add">+ ${esc(short(op.after))}</span></div></div></label>`).join('')
+      : '<div class="empty-note">Nothing to change — the fixer could not derive a safe edit for these findings.</div>';
+    $('#plan-blocked').innerHTML = plan.blocked.length ? `<div class="plan-blocked"><b>${plan.blocked.length} skipped:</b> ${plan.blocked.map(b => esc(b.reason)).filter((v, i, a) => a.indexOf(v) === i).join(' · ')}</div>` : '';
+    $('#plan-note').textContent = plan.paused ? 'Writes are paused for this site — resume them to apply.' : 'Nothing has been written yet. Every applied change stores what it replaced and can be reverted from the Automation tab.';
+    $('#plan-apply-btn').disabled = !plan.ops.length || plan.paused;
+    $('#plan-apply-btn').textContent = `Apply ${plan.ops.length} change${plan.ops.length === 1 ? '' : 's'}`;
+    openModal('plan-modal');
+  } catch { /* toasted */ }
+}
+function short(v) { const s = typeof v === 'string' ? v : JSON.stringify(v); return s.length > 160 ? s.slice(0, 157) + '…' : (s || '(empty)'); }
+$('#plan-form').addEventListener('submit', async e => {
+  e.preventDefault(); if (!currentPlan) return;
+  const opIndexes = $$('#plan-ops input[name=op]:checked').map(i => Number(i.value));
+  if (!opIndexes.length) return;
+  const btn = $('#plan-apply-btn'); btn.disabled = true; btn.textContent = 'Applying…';
+  try {
+    const r = await api('POST', `/sites/${currentPlan.siteId}/fixes/apply`, { findingId: currentPlan.findingId, opIndexes });
+    closeModals();
+    await adapter.sync(); refreshAutomation(currentPlan.siteId); render();
+    toast(`${r.applied.length} applied${r.failed.length ? `, ${r.failed.length} failed` : ''}. Re-scan to confirm from the outside.`);
+  } catch { btn.disabled = false; btn.textContent = 'Apply'; }
+});
+$('#plan-ops').addEventListener('change', () => { const n = $$('#plan-ops input[name=op]:checked').length; $('#plan-apply-btn').disabled = !n || currentPlan?.paused; $('#plan-apply-btn').textContent = `Apply ${n} change${n === 1 ? '' : 's'}`; });
+async function revertOps(opIds) {
+  if (!confirm('Revert this change on the live site?')) return;
+  try { const r = await api('POST', `/sites/${ui.siteId}/fixes/revert`, { opIds }); toast(`${r.reverted.length} reverted${r.failed.length ? `, ${r.failed.length} could not be` : ''}.`); await adapter.sync(); refreshAutomation(ui.siteId); render(); } catch { /* toasted */ }
+}
+
+/* ---------- sign-in ---------- */
+function showAuth(show) { $('#auth-overlay').classList.toggle('open', show); if (show) setTimeout(() => $('#auth-email').focus(), 0); }
+$('#auth-form').addEventListener('submit', async e => {
+  e.preventDefault();
+  const err = $('#auth-error'); err.textContent = ''; $('#auth-submit').disabled = true;
+  try {
+    const r = await auth.signIn({ email: $('#auth-email').value.trim(), password: $('#auth-password').value });
+    if (r.method === 'magic-link') err.textContent = 'Check your email for the sign-in link.';
+  } catch (e2) { err.textContent = e2.message || 'Sign-in failed'; }
+  finally { $('#auth-submit').disabled = false; }
+});
+
 /* ---------- boot ---------- */
 store.subscribe(() => render());
-store.ready.then(() => { routeFromHash(); render(); }).catch(err => {
+async function boot() {
+  await auth.init();
+  $('#sign-out-btn').hidden = !(API && auth.mode === 'supabase');
+  if (API && auth.mode === 'supabase' && !auth.isSignedIn()) {
+    showAuth(true);
+    await new Promise(resolve => auth.onChange(s => { if (s) resolve(); }));
+    showAuth(false);
+  }
+  auth.onChange(s => { if (API && auth.mode === 'supabase' && !s) location.reload(); });
+  await store.ready;
+  routeFromHash(); render();
+}
+boot().catch(err => {
   console.error(err);
   document.body.insertAdjacentHTML('afterbegin', `<div role="alert" style="padding:16px 20px;background:#f3ddd6;color:#c0503a;font:13px sans-serif">RankOps couldn't load its data: ${esc(err.message)}. ${adapter.name === 'api' ? 'Check the API token and DATABASE_URL, or switch js/config.js back to local.' : ''}</div>`);
 });
-window.rankops = { store, ui, go };   // exposed for debugging and the browser test
+window.rankops = { store, ui, go, adapter, auth };   // exposed for debugging and the browser test

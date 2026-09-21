@@ -148,7 +148,7 @@ await page.click(`[data-action="remove-client"][data-client="${zed.id}"]`);
 s = await st(); ok('remove client cascades to its site', !s.clients[zed.id] && !Object.values(s.sites).some(x=>x.clientId===zed.id));
 const a11y = await page.evaluate(() => ({ unlabeled: [...document.querySelectorAll('input:not([type=hidden]),select,textarea')].filter(i => !i.getAttribute('aria-label') && !(i.id && document.querySelector(`label[for="${i.id}"]`))).map(i=>i.id||i.outerHTML.slice(0,40)), dialogs: document.querySelectorAll('[role=dialog][aria-modal=true]').length, favicon: !!document.querySelector('link[rel=icon]') }));
 ok('all inputs labelled', a11y.unlabeled.length===0, JSON.stringify(a11y.unlabeled));
-ok('3 modals are dialogs; favicon present', a11y.dialogs===3 && a11y.favicon);
+ok('4 modals are dialogs; favicon present', a11y.dialogs===4 && a11y.favicon);
 await page.setViewportSize({ width: 390, height: 800 }); await page.click('.nav-item[data-view="dashboard"]');
 const sw = await page.evaluate(() => document.documentElement.scrollWidth);
 ok('no horizontal overflow at 390px', sw <= 392, String(sw));

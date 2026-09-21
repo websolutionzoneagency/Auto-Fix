@@ -19,15 +19,15 @@ export function defaultFixture() {
       { id: 3, name: 'info@vapewizarddxb.com', slug: 'info', email: 'info@vapewizarddxb.com', roles: ['author'] },
     ],
     posts: [
-      { id: 10, type: 'posts', link: '/blog/best-disposables/', title: 'Best disposables', meta: { rank_math_canonical_url: '' },
+      { id: 10, type: 'post', link: '/blog/best-disposables/', title: 'Best disposables', meta: { rank_math_canonical_url: '' },
         content: '<p>See our <a href="/shop/old-prefix/product/xyz/">XYZ</a> and <a href="/blog/gone/">gone</a>. Sourced from <a href="https://competitor.example/deal">competitor</a>.</p><img src="/wp-content/uploads/IMG_1234.jpg">', revisions: 24 },
-      { id: 11, type: 'posts', link: '/blog/coil-guide/', title: 'Coil guide', meta: { rank_math_canonical_url: 'https://vapewizarddxb.com/blog/coil-guide/' },
+      { id: 11, type: 'post', link: '/blog/coil-guide/', title: 'Coil guide', meta: { rank_math_canonical_url: 'https://vapewizarddxb.com/blog/coil-guide/' },
         content: '<p>Read the <a href="/blog/best-disposables/">disposables guide</a>.</p>', revisions: 3 },
-      { id: 12, type: 'posts', link: '/blog/orphan/', title: 'Orphan post', meta: {}, content: '<p>Nothing links here.</p>', revisions: 1 },
+      { id: 12, type: 'post', link: '/blog/orphan/', title: 'Orphan post', meta: {}, content: '<p>Nothing links here.</p>', revisions: 1 },
     ],
     pages: [
-      { id: 20, type: 'pages', link: '/privacy-policy/', title: 'Privacy Policy', meta: {}, content: '<p>Policy.</p>', revisions: 2 },
-      { id: 21, type: 'pages', link: '/shipping/', title: 'Shipping', meta: {}, content: '<p>Shipping.</p>', revisions: 1 },
+      { id: 20, type: 'page', link: '/privacy-policy/', title: 'Privacy Policy', meta: {}, content: '<p>Policy.</p>', revisions: 2 },
+      { id: 21, type: 'page', link: '/shipping/', title: 'Shipping', meta: {}, content: '<p>Shipping.</p>', revisions: 1 },
     ],
     media: [
       { id: 30, source_url: 'https://vapewizarddxb.com/wp-content/uploads/IMG_1234.jpg', alt_text: '', title: { rendered: 'IMG_1234' }, media_type: 'image', mime_type: 'image/jpeg' },

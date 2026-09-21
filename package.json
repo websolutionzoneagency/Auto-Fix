@@ -6,9 +6,12 @@
   "type": "module",
   "scripts": {
     "test": "node --test",
-    "dev": "npx --yes http-server -p 8080 -c-1 .",
-    "db:schema": "psql \"$DATABASE_URL\" -f db/schema.sql",
-    "e2e": "node scripts/e2e.mjs"
+    "dev": "node scripts/dev-server.mjs",
+    "db:schema": "psql \"$DATABASE_URL\" -f db/supabase.sql",
+    "e2e": "node scripts/e2e.mjs",
+    "dev:static": "npx --yes http-server -p 8080 -c-1 .",
+    "e2e:connected": "node scripts/e2e-connected.mjs",
+    "db:rls-test": "psql \"$RANKOPS_TEST_DATABASE_URL\" -f db/rls-test.sql"
   },
   "dependencies": {
     "pg": "^8.13.1"

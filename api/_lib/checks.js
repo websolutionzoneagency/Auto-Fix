@@ -57,7 +57,7 @@ export const CHECKS = {
       for (const row of [...posts, ...pages]) {
         const content = contentOf(row);
         for (const pfx of prefixes) {
-          if (content.includes(pfx)) findings.push({ id: row.id, type: row.type || 'posts', url: row.link, detail: `contains ${pfx}`, prefix: pfx });
+          if (content.includes(pfx)) findings.push({ id: row.id, type: row.type || 'post', url: row.link, detail: `contains ${pfx}`, prefix: pfx });
         }
       }
       return findings.length
@@ -139,8 +139,8 @@ export const CHECKS = {
         if (!res || res.status !== 200) continue;
         checked++;
         const found = canonicalOf(res.text);
-        if (!found) findings.push({ id: row.id, type: row.type || 'posts', url, detail: 'no canonical tag', expected: url });
-        else if (!sameUrl(found, url)) findings.push({ id: row.id, type: row.type || 'posts', url, detail: `canonical points to ${found}`, expected: url, actual: found });
+        if (!found) findings.push({ id: row.id, type: row.type || 'post', url, detail: 'no canonical tag', expected: url });
+        else if (!sameUrl(found, url)) findings.push({ id: row.id, type: row.type || 'post', url, detail: `canonical points to ${found}`, expected: url, actual: found });
       }
       if (!checked) return unknown('No page returned HTTP 200');
       return findings.length ? fail(`${findings.length}/${checked} sampled pages have a wrong or missing canonical`, findings) : pass(`All ${checked} sampled pages self-canonicalise`);
@@ -281,7 +281,7 @@ export const CHECKS = {
           let u; try { u = new URL(href, connector.baseUrl); } catch { continue; }
           if (!/^https?:$/.test(u.protocol) || u.host === host) continue;
           if (allow.some(d => u.host.toLowerCase().endsWith(d))) continue;
-          findings.push({ id: row.id, type: row.type || 'posts', url: row.link, href: u.toString(), detail: `links out to ${u.host}` });
+          findings.push({ id: row.id, type: row.type || 'post', url: row.link, href: u.toString(), detail: `links out to ${u.host}` });
         }
       }
       return findings.length ? fail(`${findings.length} off-site link(s) to review`, findings) : pass('No unexpected off-site links in sampled content');
