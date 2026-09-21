@@ -11,7 +11,8 @@ export async function getPool() {
   pool = new pg.Pool({
     connectionString: url,
     max: 3,
-    ssl: /localhost|127\.0\.0\.1/.test(url) ? false : { rejectUnauthorized: false },
+    // No TLS for local servers or unix sockets; Supabase/Neon/etc. need it. PGSSL=disable overrides.
+    ssl: process.env.PGSSL === 'disable' || /localhost|127\.0\.0\.1|host=\//.test(url) ? false : { rejectUnauthorized: false },
   });
   return pool;
 }

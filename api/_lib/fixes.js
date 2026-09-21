@@ -7,7 +7,7 @@
 // Nothing writes without a plan being produced and approved first, and no write happens
 // without a snapshot of what it replaced. A site with `paused: true` refuses every write
 // (the per-site kill switch).
-import { seoKeys } from './connectors/wordpress.js';
+import { seoKeys, restBase } from './connectors/wordpress.js';
 
 export class FixBlocked extends Error {
   constructor(msg) { super(msg); this.name = 'FixBlocked'; }
@@ -98,7 +98,8 @@ export const FIXES = {
     label: 'Replace a placeholder display name',
     itemId: 't8',
     async plan({ finding, ctx }) {
-      const proposed = ctx?.authorNames?.[finding.id] || ctx?.defaultAuthorName;
+      const specific = ctx?.authorNames?.[finding.id];
+      const proposed = specific || ctx?.defaultAuthorName;
       if (!proposed) {
         throw new FixBlocked(`No real name supplied for account #${finding.id} ("${finding.name}"). Set one in Site settings before running this fix.`);
       }
@@ -108,6 +109,7 @@ export const FIXES = {
         before: finding.name,
         after: proposed,
         describe: `Rename account #${finding.id} from "${finding.name}" to "${proposed}"`,
+        lowConfidence: !specific,               // the default name applies to every placeholder account — worth a look
       }];
     },
     async apply({ connector, op }) {
@@ -146,7 +148,7 @@ export const FIXES = {
     async plan({ finding, connector, ctx }) {
       const replacement = ctx?.prefixReplacements?.[finding.prefix];
       if (!replacement) throw new FixBlocked(`No replacement configured for the legacy prefix "${finding.prefix}".`);
-      const { data } = await connector.request(`/wp-json/wp/v2/${finding.type || 'posts'}/${finding.id}`, { query: { context: 'edit' } });
+      const { data } = await connector.request(`/wp-json/wp/v2/${restBase(finding.type || 'post')}/${finding.id}`, { query: { context: 'edit' } });
       const before = typeof data.content === 'string' ? data.content : (data.content?.raw ?? data.content?.rendered ?? '');
       const after = before.split(finding.prefix).join(replacement);
       if (after === before) return [];

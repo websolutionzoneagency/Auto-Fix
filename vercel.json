@@ -1,4 +1,6 @@
 {
   "cleanUrls": true,
-  "trailingSlash": false
+  "trailingSlash": false,
+  "functions": { "api/[...path].js": { "maxDuration": 60 } },
+  "crons": [{ "path": "/api/cron/scan", "schedule": "*/5 * * * *" }]
 }

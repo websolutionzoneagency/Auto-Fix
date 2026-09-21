@@ -24,11 +24,37 @@ Everything on screen is computed from one state object — there is no hardcoded
 
 **Health score** (per site, same formula as the Fleet Tracker): checklist completion % − 6 per open critical item − 8 per open high flag − 3 per open medium flag, floored at 0. N/a items are excluded from the completion %.
 
+## Connecting a site, scanning, fixing
+
+With the API backend on (below), the console stops being a checklist you fill in and starts checking and repairing the site itself.
+
+1. **Connect** — Site settings → Connection: the site URL, a WordPress user and an *Application Password* (Users → Profile → Application Passwords on the site), optionally WooCommerce keys. Credentials are tested against the site before they are saved, encrypted (AES-256-GCM) before they reach Postgres, and never shown again.
+2. **Install the companion plugin** — copy `wordpress-plugin/rankops-connector.php` to `wp-content/mu-plugins/`. Without it the checks still run, but revision counts and the debug flag report *not checked*, and SEO-meta fixes (canonical, noindex) cannot write. See `wordpress-plugin/README.md`.
+3. **Scan** — *Record audit* (or *Scan now* on the Automation tab) runs the 22 read-only checks. A small site finishes inside the request; anything left is continued by Vercel Cron every 5 minutes. Each verdict moves its checklist items **through the same reducer a human click uses**: pass → done with an evidence URL, fail → pending with a log line, *unknown* → untouched and explained in the audit log. A check that could not run never ticks a box.
+4. **Fix** — on a failing item with the `auto-fix` badge, *Fix →* opens a plan: every proposed change with its before/after, derived values flagged for review, irreversible ones labelled. Nothing is written until you apply. Every applied change stores what it replaced.
+5. **Revert** — Automation tab → Applied fixes → *Revert* restores the stored value on the live site and reopens the item.
+6. **Kill switch** — *Pause writes* (Automation tab or Site settings) blocks every apply and revert for that site until resumed.
+
+### What a machine may touch
+
+`js/automation.js` is the single source of truth, shared by the API and the UI:
+
+| Tier | Items | Meaning |
+|---|---|---|
+| `auto-fix` | 8 | scanner decides it **and** a fixer repairs it: canonical tags, thin-archive noindex, image alt text, author display names, legacy link prefixes, revision purge, Organization schema, open registration |
+| `auto-check` | 20 | scanner decides it; fixing needs you — each carries the reason (destructive, needs a destination, would fabricate content…) |
+| `manual` | 180 | content, strategy and every regulatory item. Silence in the map means "a machine must not touch this" |
+
+### Guardrails (all covered by tests)
+
+Planning writes nothing · a write that does not read back correctly is reported *failed*, not applied · one failure never aborts a batch · irreversible operations refuse to revert · the kill switch is checked before any planning · `unknown` verdicts never move an item.
+
 ## What it does not do (yet)
 
-- **No CMS connectors / scanning.** Nothing talks to WordPress, Shopify, Search Console or Rank Math. Item states are set by people. "Record audit" only stamps a date.
-- **No per-user accounts.** The API backend uses one shared bearer token per deployment (one agency). Multi-user auth (and per-agency tenancy — the schema already has an `agency_id` column) is the next step.
-- **Local mode is per-browser.** With the default `backend: 'local'`, data lives in that browser's `localStorage`. Use *Export JSON* for backups, or turn on the API backend below.
+- **Only WordPress** has a connector. Shopify sites can be tracked manually; `api/_lib/connectors/index.js` is where the next platform plugs in.
+- **Only WordPress REST is used** — no crawling behind logins, no JavaScript rendering. Checks sample up to 25 pages per run.
+- **No Search Console data** yet (query coverage, cannibalisation). `PSI_API_KEY` enables the Core Web Vitals check; nothing else calls Google.
+- **Single-agency token mode** has no user accounts. Supabase Auth mode has accounts and roles (owner/admin/member/viewer) but no invitation UI — add members with SQL for now (`agency_members`).
 
 ## Project structure
 
@@ -43,12 +69,28 @@ js/
   config.js           backend switch: 'local' | 'api'
   adapters/local.js   localStorage persistence (default)
   adapters/api.js     talks to /api, polls for other users' actions
+js/
+  automation.js       tier map: which items are auto-fix / auto-check / manual, and why
+  auth.js             Supabase sign-in (or static token)
 api/
-  [...path].js        Vercel serverless function: GET/PUT/DELETE /state, GET/POST /actions
-  _lib/db.js          pg pool + transactions (lazy-loaded)
-  _lib/http.js        JSON helpers, bearer-token auth
-db/schema.sql         Postgres schema + reporting views
-test/                 node --test: model, store, seed, API handler (in-memory DB)
+  [...path].js        the API: console state, connections, scans, findings, fix plan/apply/revert, cron
+  _lib/auth.js        Supabase JWT verification (HS256, no dependency) + static token; roles
+  _lib/repo.js        all SQL, every query scoped by agency
+  _lib/scanner.js     time-boxed scan batches; folds verdicts into the console snapshot
+  _lib/checks.js      22 read-only checks → pass | fail | unknown
+  _lib/fixes.js       8 fixers: plan → apply (with snapshot) → revert; kill switch
+  _lib/crypto.js      AES-256-GCM for credentials, bound to their row
+  _lib/connectors/    wordpress.js (REST + WooCommerce), index.js (registry, decrypt)
+  _lib/db.js, http.js pg pool; JSON helpers
+db/
+  supabase.sql        schema: agencies, members (auth.users), connections, scan queue, findings, fix ops; RLS
+  rls-test.sql        proves tenant isolation — every line must print OK
+wordpress-plugin/     mu-plugin: registers SEO meta for REST, revision + debug reporting, Organization schema
+scripts/
+  dev-server.mjs      local Vercel stand-in: static files + /api
+  e2e.mjs             browser test, local mode (65 checks)
+  e2e-connected.mjs   browser test, API mode against a throwaway Postgres + mock WordPress (33 checks)
+test/                 node --test: model, store, seed, crypto, connector, checks, fixes, API (real Postgres)
 ```
 
 ### How data flows
@@ -63,31 +105,34 @@ test/                 node --test: model, store, seed, API handler (in-memory DB
 
 `package.json` lists `pg` for the API; Vercel installs it, but in local mode the API is never called.
 
-## Turning on the backend (shared data across devices / teammates)
+## Turning on the backend (Supabase + Vercel)
 
-1. Create a Postgres database (Vercel Postgres / Neon / Supabase / any host) and apply the schema:
-   ```
-   psql "$DATABASE_URL" -f db/schema.sql
-   ```
-2. In the Vercel project → Settings → Environment Variables, set `DATABASE_URL` and `RANKOPS_API_TOKEN` (a long random string). See `.env.example`.
-3. In `js/config.js` set `backend: 'api'` and `apiToken` to the same token, then push.
-4. Open the app: it fetches `/api/state`, seeds the demo data on first run, and from then on every change is written to Postgres. The Checklist Template page shows `Storage: api` when it's live.
+1. **Supabase** — create a project. SQL editor → paste `db/supabase.sql` → run. Copy the *connection string* (pooler URI) and the *JWT secret* (Project Settings → API).
+2. **Vercel** → Settings → Environment Variables: `DATABASE_URL`, `ENCRYPTION_KEY` (`openssl rand -base64 32`), `CRON_SECRET`, and either `SUPABASE_JWT_SECRET` (user accounts) or `RANKOPS_API_TOKEN` (single shared token). `.env.example` lists them all with notes.
+3. **`js/config.js`** — set `backend: 'api'`, and either `supabase: { url, anonKey }` (sign-in screen appears) or `apiToken`. Push; Vercel redeploys. `vercel.json` already schedules `/api/cron/scan` every 5 minutes and gives the function 60 s.
+4. **First user** (Supabase Auth mode) — Authentication → add a user, then in SQL: `insert into agencies (id,name) values (gen_random_uuid(),'Web Solution Zone'); insert into agency_members values ('<agency uuid>','<user uuid>','owner');`
+5. Open the console. *Storage: api* on the Checklist Template page confirms it. Connect a site (above).
 
-The token is shipped in the front-end config, so it protects the API from the public internet, not from people who can open the console. Real per-user auth is the next milestone.
+Never commit `ENCRYPTION_KEY`: it is the only thing standing between the database and every stored site password. Rotating it means re-entering every connection.
 
-`db/schema.sql` also creates read-only views (`clients_v`, `sites_v`, `site_items_v`, `flags_v`, `fix_requests_v`, `audit_log_v`) so you can report with plain SQL.
+`db/supabase.sql` also adds `site_health_v` and `fix_activity_v` for SQL reporting.
 
 ## Development
 
 ```
-npm test                      # unit + API tests (node --test)
-npm run dev                   # static server on http://localhost:8080
+npm install                   # pg (API) + playwright (browser tests)
+npm test                      # unit tests always; API tests when RANKOPS_TEST_DATABASE_URL points at a Postgres
+npm run dev                   # http://localhost:8080 with /api mounted (needs the env vars, e.g. a local Postgres)
+npm run dev:static            # front end only, local mode
+npm run e2e                   # browser test, local mode
+RANKOPS_TEST_DATABASE_URL=postgres://... npm run e2e:connected   # connect → scan → fix → revert through the UI
 ```
 
-No dependencies are needed for the front end or the tests; `pg` is only loaded by the API at runtime.
+The API tests and `e2e:connected` create a throwaway database each run and drop it afterwards; they need a Postgres you can create databases on (Postgres 16 locally is fine — never point them at the production project).
 
 ## Roadmap
 
-1. Per-user accounts and per-agency tenancy on the API.
-2. CMS connectors (WordPress / WooCommerce / Rank Math, Shopify) so checklist items can be machine-checked and "Record audit" runs a real scan.
-3. Editable checklist templates per vertical.
+1. Search Console OAuth → query coverage, cannibalisation and the topical-map checks (a large slice of the `manual` tier becomes `auto-check`).
+2. Shopify connector.
+3. Member invitations and agency switching in the UI (the schema and API already support several agencies per user).
+4. Editable checklist templates per vertical.

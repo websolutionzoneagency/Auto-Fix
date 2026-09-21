@@ -155,8 +155,8 @@ export class WordPressConnector {
   }
 
   /* ---------- writes (called only by the fixer, after a snapshot) ---------- */
-  async updatePost(id, patch, type = 'posts') {
-    const { data } = await this.request(`/wp-json/wp/v2/${type}/${id}`, { method: 'POST', body: patch });
+  async updatePost(id, patch, type = 'post') {
+    const { data } = await this.request(`/wp-json/wp/v2/${restBase(type)}/${id}`, { method: 'POST', body: patch });
     return data;
   }
   async updateMedia(id, patch) {
@@ -179,6 +179,12 @@ export class WordPressConnector {
     const { data } = await this.request('/wp-json/rankops/v1/revisions/purge', { method: 'POST', body: { post_id: postId, keep } });
     return data;
   }
+}
+
+/** WordPress reports `type: "post"` but serves it at /wp/v2/posts. Map the type name to its REST base. */
+export function restBase(type) {
+  const map = { post: 'posts', page: 'pages', attachment: 'media', posts: 'posts', pages: 'pages', media: 'media' };
+  return map[type] || type;            // custom post types (e.g. WooCommerce "product") use their own name
 }
 
 export class ConnectorError extends Error {
