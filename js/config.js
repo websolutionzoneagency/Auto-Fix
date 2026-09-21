@@ -9,10 +9,14 @@
 //   supabase: { url, anonKey } — when set, the console asks users to sign in with Supabase Auth and
 //                       sends their JWT. When absent, `apiToken` (single-agency mode) is sent instead.
 const defaults = {
-  backend: 'local',
+  backend: 'api',
   apiBase: '/api',
   apiToken: '',
-  supabase: null,
+  // Public by design: the anon key only identifies the project and is bound by row-level security.
+  supabase: {
+    url: 'https://elxyggsnztsmkpviznqu.supabase.co',
+    anonKey: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVseHlnZ3NuenRzbWtwdml6bnF1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODk5ODM2NzIsImV4cCI6MjEwNTU1OTY3Mn0.bF_XfFjYEaxEwHhjUjJ1-nBGcTYq6N9nGQeHULoj2Wk',
+  },
   storageKey: 'rankops_state_v2',
 };
 
