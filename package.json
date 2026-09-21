@@ -1,0 +1,22 @@
+{
+  "name": "rankops-console",
+  "version": "2.0.0",
+  "private": true,
+  "description": "RankOps \u2014 agency console for SEO checklist progress, fix requests and flags across every client site.",
+  "type": "module",
+  "scripts": {
+    "test": "node --test",
+    "dev": "npx --yes http-server -p 8080 -c-1 .",
+    "db:schema": "psql \"$DATABASE_URL\" -f db/schema.sql",
+    "e2e": "node scripts/e2e.mjs"
+  },
+  "dependencies": {
+    "pg": "^8.13.1"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "devDependencies": {
+    "playwright": "^1.56.1"
+  }
+}

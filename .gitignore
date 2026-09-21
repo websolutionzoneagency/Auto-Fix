@@ -2,3 +2,6 @@
 .DS_Store
 node_modules
 *.log
+.env
+.env.local
+scripts/screenshot-*.png

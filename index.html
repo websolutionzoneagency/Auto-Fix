@@ -4,7 +4,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>RankOps Console</title>
-<meta name="description" content="RankOps — agency console for tracking SEO health, fix requests, and flags across every client site.">
+<meta name="description" content="RankOps — agency console for tracking SEO health, checklist progress, fix requests and flags across every client site.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23c07f2a'/%3E%3Ctext x='16' y='22' text-anchor='middle' font-family='Arial,sans-serif' font-weight='800' font-size='18' fill='%2314181f'%3ER%3C/text%3E%3C/svg%3E">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Libre+Franklin:wght@600;700;800&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
@@ -98,6 +99,8 @@
     .shell { grid-template-columns: 1fr; }
     .sidebar { position: static; height: auto; }
   }
+  .shell > * { min-width: 0; }                       /* grid children must not inherit a table's min-content width */
+  .card-body { overflow-x: auto; }                   /* wide tables scroll inside the card instead of the page */
 
   .sidebar {
     background: var(--ink);
@@ -367,6 +370,151 @@
     box-shadow: var(--shadow); opacity: 0; pointer-events: none; transition: opacity .18s, transform .18s; z-index: 60;
   }
   .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+  /* ================= SaaS additions ================= */
+  .nav-item.site-link { font-size: 12.5px; padding: 6px 10px; }
+  .nav-item.site-link .ic { opacity: .6; }
+  .nav-item .count.warn { background: var(--coral); color: #fff; }
+  .nav-scroll { max-height: 34vh; overflow-y: auto; }
+  .sidebar .agency-switch { cursor: default; }
+  .tval.mid { color: var(--amber); } .tval.low { color: var(--coral); }
+  .row-actions { display: flex; gap: 6px; justify-content: flex-end; white-space: nowrap; }
+  .btn-mini {
+    font-size: 11px; padding: 3px 8px; border-radius: 5px; border: 1px solid var(--line); background: var(--paper);
+    color: var(--muted); cursor: pointer; font-family: var(--font-body);
+  }
+  .btn-mini:hover { color: var(--ink); border-color: var(--muted); }
+  .btn-mini.danger:hover { color: var(--coral); border-color: var(--coral); }
+  .btn-primary {
+    font-size: 12.5px; color: var(--ink); background: var(--accent); border: none; padding: 7px 14px;
+    border-radius: 6px; cursor: pointer; font-family: var(--font-body); font-weight: 600;
+  }
+  .btn-primary:hover { filter: brightness(1.05); }
+  .btn-primary:disabled, .link-btn:disabled { opacity: .55; cursor: default; }
+  .toolbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 12px; font-size: 12.5px; color: var(--muted); }
+  .toolbar .spacer { flex: 1; }
+  .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 7px; overflow: hidden; background: var(--paper-raised); }
+  .seg button {
+    font-size: 12px; padding: 5px 11px; border: none; background: none; color: var(--muted); cursor: pointer; font-family: var(--font-body);
+  }
+  .seg button + button { border-left: 1px solid var(--line); }
+  .seg button.active { background: var(--ink); color: var(--paper); }
+  .toolbar select, .toolbar input[type="text"], .flag-form input, .flag-form select {
+    font-family: var(--font-body); font-size: 12.5px; color: var(--ink); background: var(--paper-raised);
+    border: 1px solid var(--line); border-radius: 7px; padding: 6px 9px;
+  }
+  .toolbar label { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
+
+  /* checklist categories */
+  .cat { background: var(--paper-raised); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); margin-bottom: 12px; overflow: hidden; }
+  .cat-head {
+    width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 16px;
+    background: none; border: none; cursor: pointer; text-align: left; font-family: var(--font-body); color: var(--ink);
+  }
+  .cat-head:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+  .cat-title { display: flex; align-items: baseline; gap: 10px; }
+  .cat-title h3 { font-size: 14.5px; }
+  .cat-title .idx { font-family: var(--font-mono); font-size: 11px; color: var(--teal); }
+  .cat-right { display: flex; align-items: center; gap: 10px; }
+  .chip { font-family: var(--font-mono); font-size: 11px; padding: 2px 8px; border-radius: 20px; background: var(--line-soft); color: var(--ink-soft); }
+  .chip.done { background: var(--teal-soft); color: var(--teal); }
+  .chip.crit { background: var(--coral-soft); color: var(--coral); }
+  .caret { color: var(--muted); font-size: 11px; transition: transform .15s ease; }
+  .cat.open .caret { transform: rotate(90deg); }
+  .cat .cat-track { height: 3px; border-radius: 0; }
+  .cat-body { display: none; padding: 4px 8px 10px; }
+  .cat.open .cat-body { display: block; }
+
+  .item { display: flex; align-items: flex-start; gap: 10px; padding: 8px 10px; border-radius: 8px; border-left: 2px solid transparent; }
+  .item:hover { background: var(--paper); }
+  .item.crit { border-left-color: var(--accent); }
+  .item.has-fix { border-left-color: var(--amber); }
+  .state-btn {
+    appearance: none; -webkit-appearance: none; width: 17px; height: 17px; margin-top: 2px; flex: none;
+    border: 1.5px solid var(--muted); border-radius: 5px; cursor: pointer; background: var(--paper-raised); position: relative; padding: 0;
+  }
+  .state-btn[data-state="done"] { background: var(--accent); border-color: var(--accent); }
+  .state-btn[data-state="done"]::after {
+    content: ""; position: absolute; left: 4.5px; top: 0.5px; width: 5px; height: 9px;
+    border: solid var(--paper-raised); border-width: 0 2px 2px 0; transform: rotate(40deg);
+  }
+  .state-btn[data-state="na"] { background: var(--line-soft); border-style: dashed; }
+  .state-btn[data-state="na"]::after { content: "–"; position: absolute; inset: 0; display: grid; place-items: center; color: var(--muted); font-size: 12px; line-height: 1; }
+  .state-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .item-body { flex: 1; min-width: 0; }
+  .item-row1 { display: flex; align-items: baseline; gap: 7px; flex-wrap: wrap; }
+  .item-code { font-family: var(--font-mono); font-size: 11px; color: var(--muted); }
+  .item-label { font-size: 13px; color: var(--ink-soft); cursor: pointer; }
+  .item-label.hinted { border-bottom: 1px dotted var(--muted); cursor: help; }
+  .item.state-done .item-label { color: var(--muted); }
+  .item.state-na .item-label { color: var(--muted); font-style: italic; }
+  .crit-badge { font-family: var(--font-mono); font-size: 9.5px; letter-spacing: .05em; text-transform: uppercase; color: var(--accent-ink); border: 1px solid var(--accent); border-radius: 20px; padding: 1px 6px; flex: none; }
+  .item-sub { display: flex; align-items: center; gap: 10px; margin-top: 3px; font-size: 11px; color: var(--muted); flex-wrap: wrap; }
+  .item-sub .ev-date { font-family: var(--font-mono); }
+  .item-sub a { color: var(--teal); text-decoration: none; }
+  .item-sub a:hover { text-decoration: underline; }
+  .item-sub .ev-btn, .item-sub .fix-btn { background: none; border: none; padding: 0; cursor: pointer; font-family: var(--font-body); font-size: 11px; }
+  .item-sub .ev-btn { color: var(--teal); }
+  .item-sub .fix-btn { color: var(--amber); font-weight: 600; }
+  .item-sub .ev-btn:hover, .item-sub .fix-btn:hover { text-decoration: underline; }
+  .item-sub input[type="url"] { font: inherit; font-size: 11.5px; padding: 3px 7px; border-radius: 6px; border: 1px solid var(--line); background: var(--paper-raised); color: var(--ink); width: 260px; max-width: 100%; }
+  .item-sub .pill { font-size: 10px; padding: 1px 7px; }
+
+  /* kanban cards */
+  .kcard { cursor: default; }
+  .kcard .kmeta { align-items: center; gap: 6px; }
+  .kcard .kmeta select {
+    font-family: var(--font-body); font-size: 10.5px; color: var(--ink); background: var(--paper-raised);
+    border: 1px solid var(--line); border-radius: 5px; padding: 2px 4px;
+  }
+  .kcard .kmeta .x { background: none; border: none; color: var(--muted); cursor: pointer; font-size: 13px; padding: 0 2px; line-height: 1; }
+  .kcard .kmeta .x:hover { color: var(--coral); }
+  .kcard .knote { font-size: 11px; color: var(--muted); font-style: italic; margin-top: 5px; overflow-wrap: anywhere; }
+  .kcard.st-blocked { border-color: var(--coral); }
+  .kcard.st-waiting { border-color: var(--amber); }
+  .prio { font-family: var(--font-mono); font-size: 10px; border-radius: 20px; padding: 1px 6px; border: 1px solid var(--line); color: var(--muted); }
+  .prio.p0 { border-color: var(--coral); color: var(--coral); font-weight: 600; }
+  .prio.p1 { border-color: var(--amber); color: var(--amber); }
+
+  /* flags */
+  .flag-row .flag-actions { display: flex; gap: 6px; flex: none; align-items: flex-start; }
+  .flag-row.resolved .flag-title { text-decoration: line-through; color: var(--muted); }
+  .flag-form { display: flex; gap: 8px; padding: 12px 18px; border-top: 1px solid var(--line-soft); flex-wrap: wrap; }
+  .flag-form input[type="text"] { flex: 1; min-width: 200px; }
+  .flag-form input.tag-in { flex: 0 1 150px; }
+
+  /* audit log kinds */
+  .log-dot.fix { background: var(--amber); }
+  .log-dot.audit { background: var(--accent); }
+  .log-dot.site, .log-dot.client, .log-dot.system { background: var(--muted); }
+  .log-date { font-family: var(--font-mono); font-size: 10.5px; color: var(--muted); }
+
+  /* templates */
+  .tmpl-hint { display: block; font-size: 11px; color: var(--muted); margin-top: 2px; }
+  .tmpl-code { width: 44px; }
+
+  /* data tools */
+  .data-tools { display: flex; gap: 8px; flex-wrap: wrap; padding: 14px 18px; align-items: center; }
+  .data-tools .note { font-size: 11.5px; color: var(--muted); flex-basis: 100%; }
+  .data-tools input[type="file"] { display: none; }
+  .mode-pill { font-family: var(--font-mono); font-size: 10.5px; padding: 2px 8px; border-radius: 20px; background: var(--line-soft); color: var(--muted); }
+  .mode-pill.api { background: var(--teal-soft); color: var(--teal); }
+
+  /* modals */
+  .modal { max-width: 440px; }
+  .modal .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0 12px; }
+  .modal textarea { width: 100%; font-family: var(--font-body); font-size: 13px; color: var(--ink); background: var(--paper); border: 1px solid var(--line); border-radius: 7px; padding: 7px 10px; min-height: 56px; resize: vertical; }
+  .modal .fieldset-title { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin-top: 18px; padding-top: 12px; border-top: 1px solid var(--line-soft); }
+  .modal .item-preview { font-size: 12.5px; color: var(--ink-soft); background: var(--paper); border: 1px solid var(--line); border-radius: 7px; padding: 8px 10px; }
+  .modal .item-preview b { font-family: var(--font-mono); font-weight: 600; color: var(--accent-ink); }
+  .modal-actions .left { margin-right: auto; }
+  .empty-note.big { padding: 40px 18px; text-align: center; }
+  .health-line { display: flex; align-items: center; gap: 8px; }
+  .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+  .search-none { padding: 18px; font-size: 12.5px; color: var(--muted); text-align: center; }
+  .site-meta .meta-item.stale b { color: var(--coral); }
+  @media (max-width: 860px) { .nav-scroll { max-height: none; } main { padding: 18px 16px 48px; } }
+  .nav-item .trunc { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; text-align: left; }
 </style>
 </head>
 <body>
@@ -374,369 +522,210 @@
 <div class="shell">
   <aside class="sidebar">
     <div class="brand">
-      <div class="brand-mark">R</div>
+      <div class="brand-mark" aria-hidden="true">R</div>
       <div>
         <div class="brand-name">RankOps</div>
         <div class="brand-sub">Agency Console</div>
       </div>
     </div>
 
-    <div class="agency-switch">
-      <span><b>Web Solution Zone</b></span>
-      <span class="chev">⌄</span>
+    <div class="agency-switch" title="Agency">
+      <span><b id="brand-agency">—</b></span>
+      <span class="chev" aria-hidden="true">⌄</span>
     </div>
 
-    <nav class="primary">
+    <nav class="primary" aria-label="Primary">
       <div class="nav-label">Overview</div>
-      <button class="nav-item active" data-view="dashboard"><span class="ic">◧</span> Dashboard</button>
-      <button class="nav-item" data-view="clients"><span class="ic">◔</span> Clients <span class="count" id="count-clients">4</span></button>
+      <button class="nav-item active" data-action="nav" data-view="dashboard"><span class="ic" aria-hidden="true">◧</span> Dashboard</button>
+      <button class="nav-item" data-action="nav" data-view="clients"><span class="ic" aria-hidden="true">◔</span> Clients <span class="count" id="count-clients">0</span></button>
 
       <div class="nav-label">Work Queue</div>
-      <button class="nav-item" data-view="flags"><span class="ic">▲</span> Flags Inbox <span class="count" id="count-flags">6</span></button>
-      <button class="nav-item" data-view="site"><span class="ic">▤</span> Site: Vape Wizard DXB</button>
+      <button class="nav-item" data-action="nav" data-view="flags"><span class="ic" aria-hidden="true">▲</span> Flags Inbox <span class="count" id="count-flags">0</span></button>
+
+      <div class="nav-label">Sites</div>
+      <div class="nav-scroll" id="nav-sites"></div>
 
       <div class="nav-label">Configure</div>
-      <button class="nav-item" data-view="templates"><span class="ic">☰</span> Checklist Templates</button>
+      <button class="nav-item" data-action="nav" data-view="templates"><span class="ic" aria-hidden="true">☰</span> Checklist Template</button>
     </nav>
 
     <div class="sidebar-foot">
-      <div class="avatar">IH</div>
-      <div>Ismail · Agency Admin</div>
-      <button class="theme-toggle" id="theme-toggle" title="Toggle theme">◐</button>
+      <div class="avatar" id="agency-avatar" aria-hidden="true">—</div>
+      <div id="agency-user">—</div>
+      <button class="theme-toggle" id="theme-toggle" data-action="theme" title="Toggle theme" aria-label="Toggle colour theme">◐</button>
     </div>
   </aside>
 
   <main>
 
     <!-- ================= DASHBOARD ================= -->
-    <section class="view active" id="view-dashboard">
+    <section class="view active" id="view-dashboard" aria-labelledby="dash-title">
       <div class="topbar">
         <div>
-          <h1>Agency Dashboard</h1>
-          <div class="sub">Web Solution Zone · <span id="dash-client-count">4</span> client accounts · <span id="dash-site-count">4</span> sites monitored</div>
+          <h1 id="dash-title">Agency Dashboard</h1>
+          <div class="sub" id="dash-sub">—</div>
         </div>
-        <div class="search"><span>⌕</span><input type="text" id="client-search" placeholder="Search clients, sites, flags…"></div>
+        <div class="search"><span aria-hidden="true">⌕</span><input type="search" id="client-search" placeholder="Search clients, sites, domains…" aria-label="Search clients, sites and domains"></div>
       </div>
 
       <div class="tiles">
-        <div class="tile">
-          <div class="tlabel">Avg. Health Score</div>
-          <div class="tval">81</div>
-          <div class="tdelta up">↑ 6 pts this month</div>
-        </div>
-        <div class="tile">
-          <div class="tlabel">Sites Monitored</div>
-          <div class="tval" id="tile-sites">4</div>
-          <div class="tdelta">1 in recommend-only mode</div>
-        </div>
-        <div class="tile">
-          <div class="tlabel">Open Flags</div>
-          <div class="tval">6</div>
-          <div class="tdelta warn">2 high severity</div>
-        </div>
-        <div class="tile">
-          <div class="tlabel">Fix Requests Active</div>
-          <div class="tval" id="tile-fixreq">11</div>
-          <div class="tdelta" id="tile-fixreq-sub">7 pending · 4 in progress</div>
-        </div>
-        <div class="tile">
-          <div class="tlabel">Auto-Resolved (30d)</div>
-          <div class="tval">318</div>
-          <div class="tdelta up">0 rolled back</div>
-        </div>
+        <div class="tile"><div class="tlabel">Avg. Health Score</div><div class="tval" id="tile-health">–</div><div class="tdelta" id="tile-health-sub"></div></div>
+        <div class="tile"><div class="tlabel">Sites Monitored</div><div class="tval" id="tile-sites">–</div><div class="tdelta" id="tile-sites-sub"></div></div>
+        <div class="tile"><div class="tlabel">Open Flags</div><div class="tval" id="tile-flags">–</div><div class="tdelta" id="tile-flags-sub"></div></div>
+        <div class="tile"><div class="tlabel">Fix Requests Active</div><div class="tval" id="tile-fixreq">–</div><div class="tdelta" id="tile-fixreq-sub"></div></div>
+        <div class="tile"><div class="tlabel">Fixes Closed (30d)</div><div class="tval" id="tile-done">–</div><div class="tdelta" id="tile-done-sub"></div></div>
       </div>
 
       <div class="card">
-        <div class="card-head">
-          <h3>Client Accounts</h3>
-          <span class="hint">sorted by attention needed</span>
-        </div>
+        <div class="card-head"><h3>Client Accounts</h3><span class="hint">sorted by attention needed</span></div>
         <div class="card-body">
           <table>
             <thead><tr><th>Client</th><th>Sites</th><th>Platform</th><th>Health</th><th>Open Flags</th><th>Plan</th><th>Last Activity</th></tr></thead>
-            <tbody id="dashboard-client-rows">
-              <tr class="clickable" data-name="Vape Wizard DXB" onclick="showView('site')">
-                <td>Vape Wizard DXB</td>
-                <td class="mono">1</td>
-                <td><span class="platform-badge">WordPress</span></td>
-                <td><div class="score mid"><div class="bar"><span style="width:74%"></span></div><b>74</b></div></td>
-                <td><span class="pill high"><span class="dot"></span>2 high</span></td>
-                <td>Growth</td>
-                <td class="mono">2h ago</td>
-              </tr>
-              <tr class="clickable" data-name="Loomcraft Studio">
-                <td>Loomcraft Studio</td>
-                <td class="mono">1</td>
-                <td><span class="platform-badge nogap">Shopify · no connector</span></td>
-                <td><div class="score low"><div class="bar"><span style="width:58%"></span></div><b>58</b></div></td>
-                <td><span class="pill medium"><span class="dot"></span>1 medium</span></td>
-                <td>Starter</td>
-                <td class="mono">1d ago</td>
-              </tr>
-              <tr class="clickable" data-name="Northgate Dental Group">
-                <td>Northgate Dental Group</td>
-                <td class="mono">1</td>
-                <td><span class="platform-badge">WordPress</span></td>
-                <td><div class="score"><div class="bar"><span style="width:91%"></span></div><b>91</b></div></td>
-                <td><span class="pill low"><span class="dot"></span>0 open</span></td>
-                <td>Growth</td>
-                <td class="mono">6h ago</td>
-              </tr>
-              <tr class="clickable" data-name="Bramfield & Cole Legal">
-                <td>Bramfield &amp; Cole Legal</td>
-                <td class="mono">1</td>
-                <td><span class="platform-badge">WordPress</span></td>
-                <td><div class="score"><div class="bar"><span style="width:88%"></span></div><b>88</b></div></td>
-                <td><span class="pill medium"><span class="dot"></span>1 medium</span></td>
-                <td>Growth</td>
-                <td class="mono">3d ago</td>
-              </tr>
-            </tbody>
+            <tbody id="dashboard-client-rows"></tbody>
           </table>
+          <div class="search-none" id="dashboard-empty" hidden></div>
         </div>
       </div>
 
       <div class="card">
-        <div class="card-head">
-          <h3>Needs Your Decision</h3>
-          <span class="hint">2 high-severity flags across the portfolio</span>
-        </div>
-        <div class="card-body">
-          <div class="flag-row">
-            <div class="flag-stripe high"></div>
-            <div class="flag-body">
-              <div class="flag-title">Nicotine strength exceeds regulatory cap, no disclosure</div>
-              <div class="flag-desc">73 products state a nicotine strength above the UAE's 20mg/ml cap with no compliance disclosure. Needs a read on whether the cap applies to sealed disposables before any listing changes.</div>
-              <div class="flag-tags"><span class="tag">Vape Wizard DXB</span><span class="tag">compliance</span><span class="tag">high</span></div>
-            </div>
-          </div>
-          <div class="flag-row">
-            <div class="flag-stripe high"></div>
-            <div class="flag-body">
-              <div class="flag-title">Duplicate brand taxonomy term with zero linked stock</div>
-              <div class="flag-desc">"YOUTOTECH" is a fully-built brand page assigned to 0 real products — a stale duplicate of the real "Yuoto" brand (4 products). Needs a merge/redirect decision.</div>
-              <div class="flag-tags"><span class="tag">Vape Wizard DXB</span><span class="tag">data-integrity</span><span class="tag">medium</span></div>
-            </div>
-          </div>
-        </div>
+        <div class="card-head"><h3>Needs Your Decision</h3><span class="hint" id="dash-decisions-hint"></span></div>
+        <div class="card-body" id="dash-decisions"></div>
       </div>
     </section>
 
     <!-- ================= CLIENTS ================= -->
-    <section class="view" id="view-clients">
+    <section class="view" id="view-clients" aria-labelledby="clients-title">
       <div class="topbar">
         <div>
-          <h1>Clients</h1>
-          <div class="sub"><span id="clients-count">4</span> accounts on Web Solution Zone</div>
+          <h1 id="clients-title">Clients</h1>
+          <div class="sub"><span id="clients-count">0</span> accounts on <span id="clients-agency">—</span></div>
         </div>
-        <button class="link-btn" id="add-client-btn">+ Add client</button>
+        <button class="link-btn" id="add-client-btn" data-action="add-client">+ Add client</button>
       </div>
       <div class="card">
         <div class="card-body">
           <table>
-            <thead><tr><th>Account</th><th>Contact</th><th>Sites</th><th>Health</th><th>Open Flags</th><th>Plan</th></tr></thead>
-            <tbody id="clients-rows">
-              <tr class="clickable" data-name="Vape Wizard DXB" onclick="showView('site')"><td>Vape Wizard DXB</td><td>Ismail Hossain</td><td class="mono">1</td><td><div class="score mid"><div class="bar"><span style="width:74%"></span></div><b>74</b></div></td><td><span class="pill high">2 high</span></td><td>Growth</td></tr>
-              <tr class="clickable" data-name="Loomcraft Studio"><td>Loomcraft Studio</td><td>R. Okafor</td><td class="mono">1</td><td><div class="score low"><div class="bar"><span style="width:58%"></span></div><b>58</b></div></td><td><span class="pill medium">1 medium</span></td><td>Starter</td></tr>
-              <tr class="clickable" data-name="Northgate Dental Group"><td>Northgate Dental Group</td><td>Dr. S. Byrne</td><td class="mono">1</td><td><div class="score"><div class="bar"><span style="width:91%"></span></div><b>91</b></div></td><td><span class="pill low">0 open</span></td><td>Growth</td></tr>
-              <tr class="clickable" data-name="Bramfield & Cole Legal"><td>Bramfield &amp; Cole Legal</td><td>M. Bramfield</td><td class="mono">1</td><td><div class="score"><div class="bar"><span style="width:88%"></span></div><b>88</b></div></td><td><span class="pill medium">1 medium</span></td><td>Growth</td></tr>
-            </tbody>
+            <thead><tr><th>Account</th><th>Contact</th><th>Sites</th><th>Health</th><th>Open Flags</th><th>Plan</th><th></th></tr></thead>
+            <tbody id="clients-rows"></tbody>
           </table>
+          <div class="empty-note big" id="clients-empty" hidden>No client accounts yet. Add your first client to start auditing.</div>
         </div>
       </div>
     </section>
 
     <!-- ================= FLAGS INBOX ================= -->
-    <section class="view" id="view-flags">
+    <section class="view" id="view-flags" aria-labelledby="flags-title">
       <div class="topbar">
         <div>
-          <h1>Flags Inbox</h1>
+          <h1 id="flags-title">Flags Inbox</h1>
           <div class="sub">Findings RankOps will not resolve on its own — every one needs a client or agency decision</div>
         </div>
       </div>
-      <div class="card">
-        <div class="card-head"><h3>All open flags</h3><span class="hint">6 across 3 clients</span></div>
-        <div class="card-body">
-          <div class="flag-row">
-            <div class="flag-stripe high"></div>
-            <div class="flag-body">
-              <div class="flag-title">Nicotine strength exceeds regulatory cap, no disclosure</div>
-              <div class="flag-desc">73 products state nicotine strength above the UAE's 20mg/ml cap with zero compliance disclosure. Reads as standard catalog practice, not an isolated error — needs a read on whether the cap applies to sealed disposables.</div>
-              <div class="flag-tags"><span class="tag">Vape Wizard DXB</span><span class="tag">legal / compliance</span></div>
-            </div>
-          </div>
-          <div class="flag-row">
-            <div class="flag-stripe high"></div>
-            <div class="flag-body">
-              <div class="flag-title">Duplicate brand taxonomy term, zero linked stock</div>
-              <div class="flag-desc">"YOUTOTECH" brand page has 0 real products — a stale duplicate of "Yuoto" (4 products). Needs a merge/redirect decision.</div>
-              <div class="flag-tags"><span class="tag">Vape Wizard DXB</span><span class="tag">data integrity</span></div>
-            </div>
-          </div>
-          <div class="flag-row">
-            <div class="flag-stripe medium"></div>
-            <div class="flag-body">
-              <div class="flag-title">No connector for Shopify — running in recommend-only mode</div>
-              <div class="flag-desc">14 on-page recommendations are queued as written suggestions rather than live fixes until a Shopify connector is authorized for this store.</div>
-              <div class="flag-tags"><span class="tag">Loomcraft Studio</span><span class="tag">platform gap</span></div>
-            </div>
-          </div>
-          <div class="flag-row">
-            <div class="flag-stripe medium"></div>
-            <div class="flag-body">
-              <div class="flag-title">aggregateRating schema absent — zero approved reviews exist</div>
-              <div class="flag-desc">Product schema is otherwise complete. Rating schema can't be added without fabricating reviews that don't exist. Add once real reviews accumulate.</div>
-              <div class="flag-tags"><span class="tag">Bramfield &amp; Cole Legal</span><span class="tag">unfabricatable gap</span></div>
-            </div>
-          </div>
-          <div class="flag-row">
-            <div class="flag-stripe low"></div>
-            <div class="flag-body">
-              <div class="flag-title">Two admin accounts use non-professional display names</div>
-              <div class="flag-desc">One account displays the raw brand username, another a bare email address, in public author bylines.</div>
-              <div class="flag-tags"><span class="tag">Vape Wizard DXB</span><span class="tag">E-E-A-T</span></div>
-            </div>
-          </div>
-          <div class="flag-row">
-            <div class="flag-stripe low"></div>
-            <div class="flag-body">
-              <div class="flag-title">Person schema has no sameAs — no real profile URLs exist yet</div>
-              <div class="flag-desc">Add real social/professional profile links once they exist; not invented in the meantime.</div>
-              <div class="flag-tags"><span class="tag">Northgate Dental Group</span><span class="tag">schema</span></div>
-            </div>
-          </div>
+      <div class="toolbar">
+        <div class="seg" id="flags-filter" role="group" aria-label="Filter by severity">
+          <button class="active" data-action="flags-filter" data-filter="all">All</button>
+          <button data-action="flags-filter" data-filter="high">High</button>
+          <button data-action="flags-filter" data-filter="medium">Medium</button>
+          <button data-action="flags-filter" data-filter="low">Low</button>
         </div>
+        <label><input type="checkbox" id="flags-show-resolved" aria-label="Show resolved flags"> show resolved</label>
+        <span class="spacer"></span>
+        <span id="flags-hint"></span>
       </div>
+      <div class="card"><div class="card-body" id="flags-list"></div></div>
     </section>
 
     <!-- ================= SITE DETAIL ================= -->
-    <section class="view" id="view-site">
-      <div class="breadcrumb"><button class="back-link" onclick="showView('clients')">← Clients</button> &nbsp;/&nbsp; <b>Vape Wizard DXB</b></div>
+    <section class="view" id="view-site" aria-labelledby="site-name">
+      <div class="breadcrumb"><button class="back-link" data-action="nav" data-view="clients">← Clients</button> &nbsp;/&nbsp; <button class="back-link" id="site-client-link" data-action="open-client"></button> &nbsp;/&nbsp; <b id="site-breadcrumb-name"></b></div>
       <div class="site-head">
         <div>
-          <h1>Vape Wizard DXB</h1>
+          <h1 id="site-name">—</h1>
           <div class="site-meta">
-            <div class="meta-item">Domain <b>vapewizarddxb.com</b></div>
-            <div class="meta-item">Connector <b>WordPress · WooCommerce · Rank Math</b></div>
-            <div class="meta-item">Health Score <b>74 / 100</b></div>
-            <div class="meta-item">Checklist <b>61 / 78 items</b></div>
+            <div class="meta-item">Domain <b id="site-domain">—</b></div>
+            <div class="meta-item">Connector <b id="site-connector">—</b></div>
+            <div class="meta-item">Health Score <b id="site-health">—</b></div>
+            <div class="meta-item">Checklist <b id="site-progress">—</b></div>
+            <div class="meta-item" id="site-audit-item">Last audit <b id="site-audit">—</b></div>
           </div>
         </div>
-        <button class="link-btn" id="run-audit-btn">Run full audit</button>
+        <div class="row-actions">
+          <button class="btn-mini" data-action="edit-site">Site settings</button>
+          <button class="link-btn" id="record-audit-btn" data-action="record-audit" title="Stamp the date this site's checklist was reviewed">Record audit</button>
+        </div>
       </div>
 
-      <div class="tabs">
-        <button class="tab active" data-sub="checklist">Checklist</button>
-        <button class="tab" data-sub="fixreq">Fix Requests <span class="num" style="color:var(--muted);font-size:11px;">(4)</span></button>
-        <button class="tab" data-sub="siteflags">Flags <span class="num" style="color:var(--muted);font-size:11px;">(2)</span></button>
-        <button class="tab" data-sub="log">Audit Log</button>
+      <div class="tabs" role="tablist">
+        <button class="tab active" role="tab" data-action="tab" data-sub="checklist">Checklist</button>
+        <button class="tab" role="tab" data-action="tab" data-sub="fixreq">Fix Requests <span class="num" id="tab-count-fixreq" style="color:var(--muted);font-size:11px;"></span></button>
+        <button class="tab" role="tab" data-action="tab" data-sub="siteflags">Flags <span class="num" id="tab-count-flags" style="color:var(--muted);font-size:11px;"></span></button>
+        <button class="tab" role="tab" data-action="tab" data-sub="log">Audit Log</button>
       </div>
 
       <div class="subview active" id="sub-checklist">
-        <div class="card">
-          <div class="card-head"><h3>Progress by category</h3><span class="hint">18 categories · machine-checked</span></div>
-          <div class="card-body">
-            <div class="cat-row"><span>Trust &amp; Compliance</span><div class="cat-track"><span style="width:100%"></span></div><span class="cat-frac">9/9</span></div>
-            <div class="cat-row"><span>Technical / Linking</span><div class="cat-track"><span style="width:88%"></span></div><span class="cat-frac">7/8</span></div>
-            <div class="cat-row"><span>Schema &amp; Entity</span><div class="cat-track"><span style="width:90%"></span></div><span class="cat-frac">9/10</span></div>
-            <div class="cat-row"><span>Image SEO</span><div class="cat-track"><span style="width:100%"></span></div><span class="cat-frac">2/2</span></div>
-            <div class="cat-row"><span>AI-Visibility (AEO)</span><div class="cat-track"><span style="width:100%"></span></div><span class="cat-frac">8/8</span></div>
-            <div class="cat-row"><span>GSC / Content Quality</span><div class="cat-track"><span style="width:100%"></span></div><span class="cat-frac">7/7</span></div>
-            <div class="cat-row"><span>Topical Map</span><div class="cat-track"><span style="width:79%"></span></div><span class="cat-frac">19/24</span></div>
+        <div class="toolbar">
+          <div class="seg" role="group" aria-label="Filter checklist items">
+            <button class="active" data-action="checklist-filter" data-filter="all">All</button>
+            <button data-action="checklist-filter" data-filter="pending">Pending</button>
+            <button data-action="checklist-filter" data-filter="crit">Critical</button>
+            <button data-action="checklist-filter" data-filter="done">Done</button>
           </div>
+          <span id="checklist-summary"></span>
+          <span class="spacer"></span>
+          <button class="btn-mini" data-action="expand-all">Expand all</button>
+          <button class="btn-mini" data-action="collapse-all">Collapse all</button>
         </div>
+        <div id="checklist-cats"></div>
       </div>
 
       <div class="subview" id="sub-fixreq">
+        <div class="toolbar"><span id="fixreq-summary"></span><span class="spacer"></span><span>Queue a fix from any checklist item → "Request fix"</span></div>
         <div class="kanban">
-          <div class="kcol">
-            <div class="kcol-head"><span>Pending</span> <span class="n" id="kcount-pending">3</span></div>
-            <div class="kcards" id="kcol-pending" data-status="pending">
-              <div class="kcard" data-status="pending"><div class="kitem">t9</div><div class="ktitle">Footer/nav links wired to live pages, no dead # placeholders</div><div class="kmeta"><span>P1</span><span class="advance">move to In Progress →</span></div></div>
-              <div class="kcard" data-status="pending"><div class="kitem">a5</div><div class="ktitle">Brand and product entity named consistently for citation</div><div class="kmeta"><span>P1</span><span class="advance">move to In Progress →</span></div></div>
-              <div class="kcard" data-status="pending"><div class="kitem">l5</div><div class="ktitle">Orphaned pages linked back into the topical cluster</div><div class="kmeta"><span>P2</span><span class="advance">move to In Progress →</span></div></div>
-            </div>
-          </div>
-          <div class="kcol">
-            <div class="kcol-head"><span>In Progress</span> <span class="n" id="kcount-progress">1</span></div>
-            <div class="kcards" id="kcol-progress" data-status="progress">
-              <div class="kcard" data-status="progress"><div class="kitem">a8</div><div class="ktitle">Enumerable content marked up as real lists/tables, not prose</div><div class="kmeta"><span>P1</span><span class="advance">mark Done →</span></div></div>
-            </div>
-          </div>
-          <div class="kcol">
-            <div class="kcol-head"><span>Done (7d)</span> <span class="n" id="kcount-done">14</span></div>
-            <div class="kcards" id="kcol-done" data-status="done">
-              <div class="kcard" data-status="done"><div class="kitem">a2</div><div class="ktitle">Structured Q&amp;A blocks present for easy extraction</div><div class="kmeta"><span class="pill done">verified live</span><span>2h ago</span></div></div>
-              <div class="kcard" data-status="done"><div class="kitem">a7</div><div class="ktitle">Preferred Sources button installed sitewide</div><div class="kmeta"><span class="pill done">verified live</span><span>3h ago</span></div></div>
-              <div class="kcard" data-status="done"><div class="kitem">s9</div><div class="ktitle">HowTo schema for genuine step-by-step content</div><div class="kmeta"><span class="pill done">verified live</span><span>1d ago</span></div></div>
-            </div>
-          </div>
+          <div class="kcol"><div class="kcol-head"><span>Queued</span> <span class="n" id="kcount-pending">0</span></div><div class="kcards" id="kcol-pending"></div></div>
+          <div class="kcol"><div class="kcol-head"><span>In progress</span> <span class="n" id="kcount-progress">0</span></div><div class="kcards" id="kcol-progress"></div></div>
+          <div class="kcol"><div class="kcol-head"><span>Done</span> <span class="n" id="kcount-done">0</span></div><div class="kcards" id="kcol-done"></div></div>
         </div>
       </div>
 
       <div class="subview" id="sub-siteflags">
         <div class="card">
-          <div class="card-body">
-            <div class="flag-row">
-              <div class="flag-stripe high"></div>
-              <div class="flag-body">
-                <div class="flag-title">Nicotine strength exceeds regulatory cap, no disclosure</div>
-                <div class="flag-desc">73 products state a nicotine strength above the UAE's 20mg/ml cap, none carrying a compliance disclosure. Not touched — this is a business/legal decision, not a content fix.</div>
-                <div class="flag-tags"><span class="tag">legal / compliance</span><span class="tag">73 products</span></div>
-              </div>
-            </div>
-            <div class="flag-row">
-              <div class="flag-stripe medium"></div>
-              <div class="flag-body">
-                <div class="flag-title">34 products carry a manually-authored schema entry independent of page content</div>
-                <div class="flag-desc">Predates RankOps management. At least one confirmed stale — question text matches nothing on the live page. Needs a decision: reconcile or remove.</div>
-                <div class="flag-tags"><span class="tag">schema integrity</span></div>
-              </div>
-            </div>
-          </div>
+          <div class="card-body" id="site-flags-list"></div>
+          <form class="flag-form" id="flag-form">
+            <input type="text" id="flag-text" placeholder="e.g. 50mg SKU exceeds stated UAE cap…" aria-label="Flag description" required>
+            <input type="text" id="flag-tag" class="tag-in" placeholder="tag (optional)" aria-label="Flag tag">
+            <select id="flag-sev" aria-label="Severity"><option value="high">High</option><option value="medium" selected>Medium</option><option value="low">Low</option></select>
+            <button type="submit" class="link-btn">+ Flag</button>
+          </form>
         </div>
       </div>
 
       <div class="subview" id="sub-log">
-        <div class="card">
-          <div class="card-body" id="audit-log-body">
-            <div class="log-item"><div class="log-dot"></div><div class="log-time num">14:18</div><div class="log-text"><b>a2 extended to archive pages</b> — added a grounded FAQ block (SKU count, category mix, authenticity, delivery) to all 78 brand pages and all 11 category pages. Verified live on 4 samples.</div></div>
-            <div class="log-item"><div class="log-dot"></div><div class="log-time num">14:13</div><div class="log-text"><b>t9 checked</b> — 41 unique footer/nav links HEAD-checked, all HTTP 200. No dead links found.</div></div>
-            <div class="log-item"><div class="log-dot flag"></div><div class="log-time num">13:41</div><div class="log-text"><b>Flag raised</b> — duplicate "YOUTOTECH" brand term found with 0 linked products during a2 scoping. Not modified, escalated for a merge decision.</div></div>
-            <div class="log-item"><div class="log-dot"></div><div class="log-time num">13:29</div><div class="log-text"><b>a7 installed</b> — Google Preferred Sources script + button added sitewide via the site's schema plugin. Eligibility check requires the client's own Google sign-in — flagged for them to check.</div></div>
-          </div>
-        </div>
+        <div class="card"><div class="card-body" id="audit-log-body"></div></div>
       </div>
     </section>
 
-    <!-- ================= TEMPLATES ================= -->
-    <section class="view" id="view-templates">
+    <!-- ================= TEMPLATE ================= -->
+    <section class="view" id="view-templates" aria-labelledby="tmpl-title">
       <div class="topbar">
         <div>
-          <h1>Checklist Templates</h1>
-          <div class="sub">The master checklist every new site is audited against. Edit here to change it for all clients, or fork per-vertical.</div>
+          <h1 id="tmpl-title">Checklist Template</h1>
+          <div class="sub" id="tmpl-sub">The master checklist every site is audited against.</div>
         </div>
+        <div class="search"><span aria-hidden="true">⌕</span><input type="search" id="tmpl-search" placeholder="Search items…" aria-label="Search checklist items"></div>
       </div>
+      <div id="templates-body"></div>
+
+      <div class="section-title">Data</div>
       <div class="card">
-        <div class="card-head"><h3>AI-Visibility (AEO)</h3><span class="hint">8 items</span></div>
-        <div class="card-body">
-          <div class="tmpl-item"><span class="tmpl-code">a1</span><span class="tmpl-label">Page answers likely AI Overview / assistant queries directly and early</span><span class="strategy auto">auto-fixable</span></div>
-          <div class="tmpl-item"><span class="tmpl-code">a2</span><span class="tmpl-label">Structured Q&amp;A blocks present for easy extraction</span><span class="strategy auto">auto-fixable</span></div>
-          <div class="tmpl-item"><span class="tmpl-code">a3</span><span class="tmpl-label">Claims are quantified, sourced and hands-on rather than vague</span><span class="strategy auto">auto-fixable</span></div>
-          <div class="tmpl-item"><span class="tmpl-code">a4</span><span class="tmpl-label">Unique photography or data used over stock imagery</span><span class="strategy flagonly">flag-only</span></div>
-          <div class="tmpl-item"><span class="tmpl-code">a5</span><span class="tmpl-label">Brand and product entity named consistently for citation</span><span class="strategy check">check-only</span></div>
-          <div class="tmpl-item"><span class="tmpl-code">a6</span><span class="tmpl-label">AI-visibility spot-check run for target queries</span><span class="strategy check">check-only</span></div>
-          <div class="tmpl-item"><span class="tmpl-code">a7</span><span class="tmpl-label">Domain eligibility confirmed, Preferred Sources button installed</span><span class="strategy check">check-only</span></div>
-          <div class="tmpl-item"><span class="tmpl-code">a8</span><span class="tmpl-label">Enumerable content marked up as real lists/tables, not prose</span><span class="strategy auto">auto-fixable</span></div>
-        </div>
-      </div>
-      <div class="card">
-        <div class="card-head"><h3>Trust &amp; Compliance</h3><span class="hint">9 items</span></div>
-        <div class="card-body">
-          <div class="tmpl-item"><span class="tmpl-code">t2</span><span class="tmpl-label">Real founder / About page identity, not a stock template</span><span class="strategy auto">auto-fixable</span></div>
-          <div class="tmpl-item"><span class="tmpl-code">t9</span><span class="tmpl-label">Footer/nav links wired to live pages, no dead # placeholders</span><span class="strategy check">check-only</span></div>
-          <div class="tmpl-item"><span class="tmpl-code">uc2</span><span class="tmpl-label">Age-gate (18+) live and working on site entry</span><span class="strategy check">check-only</span></div>
-          <div class="tmpl-item"><span class="tmpl-code">uc4</span><span class="tmpl-label">Regulated / health-claim content held until legal sign-off</span><span class="strategy flagonly">flag-only</span></div>
+        <div class="data-tools">
+          <span>Storage: <span class="mode-pill" id="backend-mode">local</span></span>
+          <span class="spacer"></span>
+          <button class="btn-mini" data-action="export">Export JSON</button>
+          <button class="btn-mini" data-action="import">Import JSON</button>
+          <input type="file" id="import-input" accept="application/json,.json" aria-label="Import JSON file">
+          <button class="btn-mini" data-action="reset-demo">Reset to demo data</button>
+          <button class="btn-mini danger" data-action="clear-all">Delete all data</button>
+          <span class="note" id="backend-note"></span>
         </div>
       </div>
     </section>
@@ -744,266 +733,76 @@
   </main>
 </div>
 
-<!-- Add client modal -->
-<div class="modal-backdrop" id="add-client-backdrop">
-  <div class="modal">
-    <h3>Add a client account</h3>
-    <label for="new-client-name">Account name</label>
-    <input type="text" id="new-client-name" placeholder="e.g. Harborline Dental">
-    <label for="new-client-contact">Primary contact</label>
-    <input type="text" id="new-client-contact" placeholder="e.g. J. Alvarez">
-    <label for="new-client-platform">Platform</label>
-    <select id="new-client-platform">
-      <option>WordPress</option>
-      <option>Shopify</option>
-      <option>Webflow</option>
-      <option>Other / no connector yet</option>
-    </select>
-    <label for="new-client-plan">Plan</label>
-    <select id="new-client-plan">
-      <option>Starter</option>
-      <option selected>Growth</option>
-      <option>Scale</option>
-    </select>
-    <div class="modal-actions">
-      <button class="btn-ghost" id="add-client-cancel">Cancel</button>
-      <button class="link-btn" id="add-client-save">Add client</button>
+<!-- Add / edit client -->
+<div class="modal-backdrop" id="client-modal">
+  <form class="modal" id="client-form" role="dialog" aria-modal="true" aria-labelledby="client-modal-title">
+    <h3 id="client-modal-title">Add a client account</h3>
+    <label for="client-name">Account name</label>
+    <input type="text" id="client-name" placeholder="e.g. Harborline Dental" required autocomplete="off">
+    <div class="grid2">
+      <div><label for="client-contact">Primary contact</label><input type="text" id="client-contact" placeholder="e.g. J. Alvarez" autocomplete="off"></div>
+      <div><label for="client-plan">Plan</label><select id="client-plan"><option>Starter</option><option selected>Growth</option><option>Scale</option></select></div>
     </div>
-  </div>
+    <div class="fieldset-title">First site</div>
+    <label for="client-site-domain">Domain</label>
+    <input type="text" id="client-site-domain" placeholder="e.g. harborlinedental.com" autocomplete="off">
+    <div class="grid2">
+      <div><label for="client-site-platform">Platform</label>
+        <select id="client-site-platform"><option>WordPress</option><option>Shopify</option><option>Webflow</option><option>Other</option></select></div>
+      <div><label for="client-site-connector">Connector</label><input type="text" id="client-site-connector" placeholder="e.g. WooCommerce · Rank Math" autocomplete="off"></div>
+    </div>
+    <div class="modal-actions">
+      <button type="button" class="btn-ghost" data-action="modal-close">Cancel</button>
+      <button type="submit" class="link-btn">Add client</button>
+    </div>
+  </form>
 </div>
-<div class="toast" id="toast"></div>
 
-<script>
-(function () {
-  'use strict';
+<!-- Add / edit site -->
+<div class="modal-backdrop" id="site-modal">
+  <form class="modal" id="site-form" role="dialog" aria-modal="true" aria-labelledby="site-modal-title">
+    <h3 id="site-modal-title">Add a site</h3>
+    <input type="hidden" id="site-form-id"><input type="hidden" id="site-form-client">
+    <label for="site-form-name">Site name</label>
+    <input type="text" id="site-form-name" required autocomplete="off">
+    <label for="site-form-domain">Domain</label>
+    <input type="text" id="site-form-domain" placeholder="e.g. store.example.com" autocomplete="off">
+    <div class="grid2">
+      <div><label for="site-form-platform">Platform</label>
+        <select id="site-form-platform"><option>WordPress</option><option>Shopify</option><option>Webflow</option><option>Other</option></select></div>
+      <div><label for="site-form-connector">Connector</label><input type="text" id="site-form-connector" placeholder="leave blank if none yet" autocomplete="off"></div>
+    </div>
+    <label for="site-form-notes">Notes</label>
+    <textarea id="site-form-notes" placeholder="Anything the team should know about this site"></textarea>
+    <div class="modal-actions">
+      <button type="button" class="btn-mini danger left" id="site-delete-btn" data-action="delete-site" hidden>Delete site</button>
+      <button type="button" class="btn-ghost" data-action="modal-close">Cancel</button>
+      <button type="submit" class="link-btn" id="site-form-submit">Add site</button>
+    </div>
+  </form>
+</div>
 
-  /* ---------- tiny persistence layer (localStorage, per-browser) ---------- */
-  var STORAGE_KEY = 'rankops_console_state_v1';
-  function loadState() {
-    try {
-      var raw = window.localStorage.getItem(STORAGE_KEY);
-      return raw ? JSON.parse(raw) : null;
-    } catch (e) { return null; }
-  }
-  function saveState(state) {
-    try { window.localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); } catch (e) { /* private mode etc: ignore */ }
-  }
+<!-- Request fix -->
+<div class="modal-backdrop" id="fix-modal">
+  <form class="modal" id="fix-form" role="dialog" aria-modal="true" aria-labelledby="fix-modal-title">
+    <h3 id="fix-modal-title">Request a fix</h3>
+    <input type="hidden" id="fix-item-id">
+    <div class="item-preview" id="fix-item-label"></div>
+    <div class="grid2">
+      <div><label for="fix-priority">Priority</label>
+        <select id="fix-priority"><option value="p0">P0 — do first</option><option value="p1" selected>P1</option><option value="p2">P2 — when convenient</option></select></div>
+    </div>
+    <label for="fix-note">Note for whoever picks this up</label>
+    <textarea id="fix-note" placeholder="optional"></textarea>
+    <div class="modal-actions">
+      <button type="button" class="btn-ghost" data-action="modal-close">Cancel</button>
+      <button type="submit" class="link-btn">Queue fix</button>
+    </div>
+  </form>
+</div>
 
-  var state = loadState() || { theme: null, extraClients: [], kanban: {} };
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
 
-  /* ---------- theme toggle (light / dark / system) ---------- */
-  var root = document.documentElement;
-  var themeBtn = document.getElementById('theme-toggle');
-  function applyTheme() {
-    if (state.theme === 'light') { root.setAttribute('data-theme', 'light'); themeBtn.textContent = '☀'; }
-    else if (state.theme === 'dark') { root.setAttribute('data-theme', 'dark'); themeBtn.textContent = '☾'; }
-    else { root.removeAttribute('data-theme'); themeBtn.textContent = '◐'; }
-  }
-  themeBtn.addEventListener('click', function () {
-    state.theme = state.theme === null ? 'dark' : (state.theme === 'dark' ? 'light' : null);
-    applyTheme();
-    saveState(state);
-  });
-  applyTheme();
-
-  /* ---------- view + tab navigation ---------- */
-  window.showView = function (name) {
-    document.querySelectorAll('.view').forEach(function (v) { v.classList.remove('active'); });
-    var el = document.getElementById('view-' + name);
-    if (el) el.classList.add('active');
-    document.querySelectorAll('.nav-item').forEach(function (n) { n.classList.remove('active'); });
-    var target = document.querySelector('.nav-item[data-view="' + name + '"]');
-    if (target) target.classList.add('active');
-  };
-  document.querySelectorAll('.nav-item[data-view]').forEach(function (btn) {
-    btn.addEventListener('click', function () { showView(btn.getAttribute('data-view')); });
-  });
-  document.querySelectorAll('.tab[data-sub]').forEach(function (tab) {
-    tab.addEventListener('click', function () {
-      document.querySelectorAll('.tab').forEach(function (t) { t.classList.remove('active'); });
-      document.querySelectorAll('.subview').forEach(function (s) { s.classList.remove('active'); });
-      tab.classList.add('active');
-      document.getElementById('sub-' + tab.getAttribute('data-sub')).classList.add('active');
-    });
-  });
-
-  /* ---------- toast helper ---------- */
-  var toastEl = document.getElementById('toast');
-  var toastTimer = null;
-  function toast(msg) {
-    toastEl.textContent = msg;
-    toastEl.classList.add('show');
-    clearTimeout(toastTimer);
-    toastTimer = setTimeout(function () { toastEl.classList.remove('show'); }, 2200);
-  }
-
-  /* ---------- client search filter (Dashboard) ---------- */
-  var searchInput = document.getElementById('client-search');
-  searchInput.addEventListener('input', function () {
-    var q = searchInput.value.trim().toLowerCase();
-    document.querySelectorAll('#dashboard-client-rows tr').forEach(function (row) {
-      var name = (row.getAttribute('data-name') || row.textContent).toLowerCase();
-      row.style.display = (!q || name.indexOf(q) !== -1) ? '' : 'none';
-    });
-  });
-
-  /* ---------- add client modal ---------- */
-  var backdrop = document.getElementById('add-client-backdrop');
-  var openBtn = document.getElementById('add-client-btn');
-  var cancelBtn = document.getElementById('add-client-cancel');
-  var saveBtn = document.getElementById('add-client-save');
-
-  function openModal() { backdrop.classList.add('open'); document.getElementById('new-client-name').focus(); }
-  function closeModal() {
-    backdrop.classList.remove('open');
-    document.getElementById('new-client-name').value = '';
-    document.getElementById('new-client-contact').value = '';
-  }
-  openBtn.addEventListener('click', openModal);
-  cancelBtn.addEventListener('click', closeModal);
-  backdrop.addEventListener('click', function (e) { if (e.target === backdrop) closeModal(); });
-
-  function scoreBand(score) { return score >= 80 ? '' : (score >= 65 ? ' mid' : ' low'); }
-
-  function renderClientRow(client, forDashboard) {
-    var scoreClass = scoreBand(client.health);
-    var flagPill = client.flags > 0
-      ? '<span class="pill medium"><span class="dot"></span>' + client.flags + ' flag' + (client.flags > 1 ? 's' : '') + '</span>'
-      : '<span class="pill low"><span class="dot"></span>0 open</span>';
-    var platformBadge = client.platform === 'Other / no connector yet'
-      ? '<span class="platform-badge nogap">' + client.platform + '</span>'
-      : '<span class="platform-badge">' + client.platform + '</span>';
-    var tr = document.createElement('tr');
-    tr.className = 'clickable';
-    tr.setAttribute('data-name', client.name);
-    if (forDashboard) {
-      tr.innerHTML = '<td>' + client.name + '</td><td class="mono">1</td><td>' + platformBadge + '</td>' +
-        '<td><div class="score' + scoreClass + '"><div class="bar"><span style="width:' + client.health + '%"></span></div><b>' + client.health + '</b></div></td>' +
-        '<td>' + flagPill + '</td><td>' + client.plan + '</td><td class="mono">just now</td>';
-    } else {
-      tr.innerHTML = '<td>' + client.name + '</td><td>' + (client.contact || '—') + '</td><td class="mono">1</td>' +
-        '<td><div class="score' + scoreClass + '"><div class="bar"><span style="width:' + client.health + '%"></span></div><b>' + client.health + '</b></div></td>' +
-        '<td>' + flagPill + '</td><td>' + client.plan + '</td>';
-    }
-    return tr;
-  }
-
-  function refreshCounts() {
-    var totalClients = 4 + state.extraClients.length;
-    document.getElementById('count-clients').textContent = totalClients;
-    document.getElementById('clients-count').textContent = totalClients;
-    document.getElementById('dash-client-count').textContent = totalClients;
-    document.getElementById('dash-site-count').textContent = totalClients;
-    document.getElementById('tile-sites').textContent = totalClients;
-  }
-
-  function renderExtraClients() {
-    var dashBody = document.getElementById('dashboard-client-rows');
-    var clientsBody = document.getElementById('clients-rows');
-    // remove any previously-rendered extra rows before re-rendering (avoids duplicates on repeat calls)
-    dashBody.querySelectorAll('tr[data-extra="1"]').forEach(function (r) { r.remove(); });
-    clientsBody.querySelectorAll('tr[data-extra="1"]').forEach(function (r) { r.remove(); });
-    state.extraClients.forEach(function (client) {
-      var r1 = renderClientRow(client, true); r1.setAttribute('data-extra', '1'); dashBody.appendChild(r1);
-      var r2 = renderClientRow(client, false); r2.setAttribute('data-extra', '1'); clientsBody.appendChild(r2);
-    });
-    refreshCounts();
-  }
-
-  saveBtn.addEventListener('click', function () {
-    var name = document.getElementById('new-client-name').value.trim();
-    if (!name) { document.getElementById('new-client-name').focus(); return; }
-    var contact = document.getElementById('new-client-contact').value.trim();
-    var platform = document.getElementById('new-client-platform').value;
-    var plan = document.getElementById('new-client-plan').value;
-    var client = {
-      name: name,
-      contact: contact,
-      platform: platform,
-      plan: plan,
-      health: 50,
-      flags: 0
-    };
-    state.extraClients.push(client);
-    saveState(state);
-    renderExtraClients();
-    closeModal();
-    toast('Added ' + name + ' — run an audit to populate its checklist.');
-  });
-
-  renderExtraClients();
-
-  /* ---------- kanban: click a fix-request card to advance its status ---------- */
-  var STATUS_ORDER = ['pending', 'progress', 'done'];
-  var STATUS_LABEL = { pending: 'Pending', progress: 'In Progress', done: 'Done (7d)' };
-  var ADVANCE_LABEL = { pending: 'move to In Progress →', progress: 'mark Done →' };
-
-  function updateKanbanCounts() {
-    ['pending', 'progress', 'done'].forEach(function (s) {
-      var col = document.getElementById('kcol-' + s);
-      document.getElementById('kcount-' + s).textContent = col.children.length;
-      var empty = col.querySelector('.kcol-empty');
-      if (col.children.length === 0 && !empty) {
-        var note = document.createElement('div');
-        note.className = 'kcol-empty';
-        note.textContent = 'Nothing here';
-        col.appendChild(note);
-      } else if (col.children.length > 0 && empty) {
-        empty.remove();
-      }
-    });
-  }
-
-  function logKanbanMove(itemCode, title, newStatus) {
-    var log = document.getElementById('audit-log-body');
-    var now = new Date();
-    var hh = String(now.getHours()).padStart(2, '0');
-    var mm = String(now.getMinutes()).padStart(2, '0');
-    var entry = document.createElement('div');
-    entry.className = 'log-item';
-    var verb = newStatus === 'done' ? 'verified live' : 'moved to In Progress';
-    entry.innerHTML = '<div class="log-dot"></div><div class="log-time num">' + hh + ':' + mm + '</div>' +
-      '<div class="log-text"><b>' + itemCode + ' ' + verb + '</b> — ' + title + '</div>';
-    log.insertBefore(entry, log.firstChild);
-  }
-
-  document.querySelectorAll('.kcard').forEach(function (card) {
-    card.addEventListener('click', function () {
-      var status = card.getAttribute('data-status');
-      var idx = STATUS_ORDER.indexOf(status);
-      if (idx === -1 || idx === STATUS_ORDER.length - 1) return; // already Done
-      var nextStatus = STATUS_ORDER[idx + 1];
-      var itemCode = card.querySelector('.kitem') ? card.querySelector('.kitem').textContent : '';
-      var title = card.querySelector('.ktitle') ? card.querySelector('.ktitle').textContent : '';
-
-      card.setAttribute('data-status', nextStatus);
-      var meta = card.querySelector('.kmeta');
-      if (nextStatus === 'done') {
-        meta.innerHTML = '<span class="pill done">verified live</span><span>just now</span>';
-      } else {
-        meta.innerHTML = '<span>P1</span><span class="advance">' + ADVANCE_LABEL[nextStatus] + '</span>';
-      }
-      document.getElementById('kcol-' + nextStatus).appendChild(card);
-      updateKanbanCounts();
-      logKanbanMove(itemCode, title, nextStatus);
-      toast(itemCode + ' moved to ' + STATUS_LABEL[nextStatus] + '.');
-    });
-  });
-  updateKanbanCounts();
-
-  /* ---------- "Run full audit" — simulated re-scan feedback ---------- */
-  document.getElementById('run-audit-btn').addEventListener('click', function () {
-    var btn = this;
-    btn.disabled = true;
-    var original = btn.textContent;
-    btn.textContent = 'Scanning…';
-    setTimeout(function () {
-      btn.textContent = original;
-      btn.disabled = false;
-      toast('Audit complete — no new gaps found since the last run.');
-    }, 900);
-  });
-})();
-</script>
+<script type="module" src="js/app.js"></script>
 </body>
 </html>
