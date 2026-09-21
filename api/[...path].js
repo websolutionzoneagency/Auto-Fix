@@ -123,7 +123,16 @@ export default async function handler(req, res) {
       }
 
       if (sub === '/scan') {
-        if (method === 'GET') return json(res, 200, { job: await repo.latestScanJob(A, siteId) });
+        if (method === 'GET') {
+          // Polling a queued job continues it: the open console drives the scan to completion, so
+          // finishing does not depend on Cron (Vercel Hobby allows only daily crons; that one is the safety net).
+          let job = await repo.latestScanJob(A, siteId);
+          if (job && job.status === 'queued' && canWrite(auth)) {
+            const claimed = await repo.claimScanJob(90);
+            if (claimed && claimed.id === job.id) job = await runScanBatch({ job: claimed, budgetMs: inlineScanBudgetMs() });
+          }
+          return json(res, 200, { job });
+        }
         if (method === 'POST') {
           requireWrite(auth);
           const conn = await repo.getConnection(A, siteId);

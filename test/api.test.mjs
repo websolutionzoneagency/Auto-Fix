@@ -213,6 +213,14 @@ test('cron: drains queued work with the secret, rejects without it', { skip }, a
   const r = await call('POST', '/sites/s_vapewizard/scan', { body: { checks: ['sitemap', 'author-identity'] } });
   assert.equal(r.body.job.status, 'queued');
   assert.equal(r.body.job.pending.length, 2, 'nothing ran inline');
+  // Polling the job from the console continues it without Cron.
+  process.env.INLINE_SCAN_BUDGET_MS = '30000';
+  const polled = await call('GET', '/sites/s_vapewizard/scan');
+  assert.equal(polled.body.job.status, 'done', 'GET /scan drained the queued job');
+  assert.equal(polled.body.job.ran.length, 2);
+  // Queue another and leave it for Cron.
+  process.env.INLINE_SCAN_BUDGET_MS = '0';
+  await call('POST', '/sites/s_vapewizard/scan', { body: { checks: ['sitemap', 'author-identity'] } });
   process.env.INLINE_SCAN_BUDGET_MS = '30000';
   const c = await call('GET', '/cron/scan', { token: 'cron-secret' });
   assert.equal(c.status, 200);
