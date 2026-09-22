@@ -74,7 +74,7 @@ js/
   auth.js             Supabase sign-in (or static token)
 api/
   [...path].js        the API: console state, connections, scans, findings, fix plan/apply/revert, cron
-  _lib/auth.js        Supabase JWT verification (HS256, no dependency) + static token; roles
+  _lib/auth.js        Supabase JWT verification (ES256 via JWKS, or legacy HS256; no dependency) + static token; roles
   _lib/repo.js        all SQL, every query scoped by agency
   _lib/scanner.js     time-boxed scan batches; folds verdicts into the console snapshot
   _lib/checks.js      22 read-only checks → pass | fail | unknown
@@ -107,8 +107,8 @@ test/                 node --test: model, store, seed, crypto, connector, checks
 
 ## Turning on the backend (Supabase + Vercel)
 
-1. **Supabase** — create a project. SQL editor → paste `db/supabase.sql` → run. Copy the *connection string* (pooler URI) and the *JWT secret* (Project Settings → API).
-2. **Vercel** → Settings → Environment Variables: `DATABASE_URL`, `ENCRYPTION_KEY` (`openssl rand -base64 32`), `CRON_SECRET`, and either `SUPABASE_JWT_SECRET` (user accounts) or `RANKOPS_API_TOKEN` (single shared token). `.env.example` lists them all with notes.
+1. **Supabase** — create a project. SQL editor → paste `db/supabase.sql` → run. Copy the *connection string* (Project Settings → Database, pooler URI).
+2. **Vercel** → Settings → Environment Variables: `DATABASE_URL`, `ENCRYPTION_KEY` (`openssl rand -base64 32`), `CRON_SECRET`, and — only if you want single-shared-token mode instead of user accounts — `RANKOPS_API_TOKEN`. With user accounts, sign-in tokens are verified against the project's public signing keys (ES256), so nothing else is needed; a project still on the legacy HS256 *JWT secret* sets `SUPABASE_JWT_SECRET` instead. `.env.example` lists them all with notes. Redeploy after changing variables.
 3. **`js/config.js`** — set `backend: 'api'`, and either `supabase: { url, anonKey }` (sign-in screen appears) or `apiToken`. Push; Vercel redeploys. `vercel.json` gives the function 60 s and schedules `/api/cron/scan` daily (the Hobby plan allows only daily crons; scans are driven to completion by the open console anyway).
 4. **First user** (Supabase Auth mode) — Authentication → add a user, then in SQL: `insert into agencies (id,name) values (gen_random_uuid(),'Web Solution Zone'); insert into agency_members values ('<agency uuid>','<user uuid>','owner');`
 5. Open the console. *Storage: api* on the Checklist Template page confirms it. Connect a site (above).
