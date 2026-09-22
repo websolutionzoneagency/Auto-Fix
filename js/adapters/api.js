@@ -26,7 +26,7 @@ export function createApiAdapter({ apiBase = '/api', apiToken = '', pollMs = 150
     if (res.status === 204) return null;
     let data = null;
     try { data = await res.json(); } catch { /* empty body */ }
-    if (!res.ok) throw new ApiError((data && data.error) || `${method} ${path} → HTTP ${res.status}`, { status: res.status, body: data });
+    if (!res.ok) throw new ApiError(`${(data && data.error) || `HTTP ${res.status}`} (${method} ${path})`, { status: res.status, body: data });
     return data;
   }
 

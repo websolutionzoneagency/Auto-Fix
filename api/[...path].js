@@ -230,8 +230,8 @@ export default async function handler(req, res) {
 
     return json(res, 404, { error: 'not found' });
   } catch (e) {
-    if (e instanceof AuthError) return json(res, e.status, { error: e.message });
-    if (e.status) return json(res, e.status, { error: e.message });
+    if (e instanceof AuthError) { console.warn('[rankops api] 401', method, path, '-', e.message); return json(res, e.status, { error: e.message }); }
+    if (e.status) { console.warn('[rankops api]', e.status, method, path, '-', e.message); return json(res, e.status, { error: e.message }); }
     console.error('[rankops api]', e);
     return json(res, 500, { error: explainServerError(e) });
   }
