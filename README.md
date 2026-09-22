@@ -35,6 +35,18 @@ With the API backend on (below), the console stops being a checklist you fill in
 5. **Revert** — Automation tab → Applied fixes → *Revert* restores the stored value on the live site and reopens the item.
 6. **Kill switch** — *Pause writes* (Automation tab or Site settings) blocks every apply and revert for that site until resumed.
 
+### AI review: the rest of the checklist
+
+The deterministic checks cover 28 items. For everything else — and for the judgement calls the checks cannot make — the console has an **AI reviewer** (Claude by default; OpenAI supported). It needs an API key, set once per agency under **AI Settings** in the sidebar (encrypted with `ENCRYPTION_KEY` before it is stored) or in the server environment (`ANTHROPIC_API_KEY` / `OPENAI_API_KEY`).
+
+- **AI review** on any pending checklist item, or **AI audit** on the Automation tab for every pending (or every critical) item, one at a time.
+- The model inspects the live site through read-only tools — posts, pages, products, media, categories, settings and public URLs as a visitor sees them — and must submit a structured verdict: *pass*, *fail* or *could not decide*, with a summary, its reasoning and an evidence URL. Verdicts move items through the same reducer as the scanner's.
+- For a *fail* it proposes concrete edits. Only these fields can be touched: title, body, excerpt, SEO title/description/canonical/robots on posts, pages and products; alt text, title, caption and description on media; name, description and SEO fields on categories and tags. Every op is validated server-side, the current value is read from the site (the model's idea of "before" is never trusted), and edits that change nothing are dropped.
+- Nothing is written until you approve the before/after diff (**Review AI edits →**), unless **Apply AI edits automatically** is on in AI Settings. Applied edits go through the same fixer as every other fix: verified by reading back, snapshotted, revertable from the Automation tab, blocked by the kill switch.
+- The prompt forbids inventing regulatory facts, prices, stock or specifications; the reviewer is told to leave such items undecided and say what a person must supply.
+
+Set up: run `db/migrations/2026-09-22-ai-settings.sql` in the Supabase SQL editor (already included in `db/supabase.sql` for new projects), deploy, then open **AI Settings** and save a key. Each review is one tool-using model conversation, typically 20–60 s and a few thousand tokens.
+
 ### What a machine may touch
 
 `js/automation.js` is the single source of truth, shared by the API and the UI:
@@ -53,6 +65,7 @@ Planning writes nothing · a write that does not read back correctly is reported
 
 - **Only WordPress** has a connector. Shopify sites can be tracked manually; `api/_lib/connectors/index.js` is where the next platform plugs in.
 - **Only WordPress REST is used** — no crawling behind logins, no JavaScript rendering. Checks sample up to 25 pages per run.
+- **AI review needs the API backend** and a key; in local mode the console is a checklist only.
 - **No Search Console data** yet (query coverage, cannibalisation). `PSI_API_KEY` enables the Core Web Vitals check; nothing else calls Google.
 - **Single-agency token mode** has no user accounts. Supabase Auth mode has accounts and roles (owner/admin/member/viewer) but no invitation UI — add members with SQL for now (`agency_members`).
 
@@ -78,6 +91,9 @@ api/
   _lib/repo.js        all SQL, every query scoped by agency
   _lib/scanner.js     time-boxed scan batches; folds verdicts into the console snapshot
   _lib/checks.js      22 read-only checks → pass | fail | unknown
+  _lib/ai/agent.js    the AI reviewer: read-only site tools + a structured verdict with proposed edits
+  _lib/ai/edits.js    the only fields an AI edit may touch; read / write / verify them
+  _lib/ai/provider.js which model (agency setting or env) → Anthropic SDK or OpenAI adapter
   _lib/fixes.js       8 fixers: plan → apply (with snapshot) → revert; kill switch
   _lib/crypto.js      AES-256-GCM for credentials, bound to their row
   _lib/connectors/    wordpress.js (REST + WooCommerce), index.js (registry, decrypt)

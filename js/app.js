@@ -20,7 +20,7 @@ const store = createStore({ adapter, seed: demoState });
 const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
 const esc = M.escapeHtml;
-const VIEWS = ['dashboard', 'clients', 'flags', 'site', 'templates'];
+const VIEWS = ['dashboard', 'clients', 'flags', 'site', 'templates', 'ai'];
 const SUBS = ['checklist', 'fixreq', 'siteflags', 'log'];
 const SEV_RANK = { high: 0, medium: 1, low: 2 };
 
@@ -32,6 +32,7 @@ const ui = {
   tmplSearch: '',
   // per-site automation data from the API (never persisted in the console state)
   connection: {}, findings: {}, fixOps: {}, scanJob: {}, loaded: {}, busy: {},
+  ai: null, aiRun: null,                       // agency AI settings; the in-progress "AI audit" run on a site
 };
 const SUBS_ALL = ['checklist', 'fixreq', 'siteflags', 'log', 'automation'];
 
@@ -129,6 +130,7 @@ function render() {
   else if (ui.view === 'flags') renderFlags(s);
   else if (ui.view === 'site') renderSite(s);
   else if (ui.view === 'templates') renderTemplates(s);
+  else if (ui.view === 'ai') renderAiSettings();
 }
 
 function renderSidebar(s) {
@@ -317,10 +319,14 @@ function itemRow(site, it, openReq) {
   const tier = tierOf(it.id);
   const finding = API ? findingForItem(it.id) : null;
   if (finding) {
-    sub += `<span class="verdict ${esc(finding.verdict)}">${finding.verdict === 'unknown' ? 'not checked' : finding.verdict}</span><span class="scan-summary">${esc(finding.summary || '')}</span>`;
-    if (finding.verdict === 'fail' && tier === 'auto') sub += `<button type="button" class="fix-now" data-action="fix-plan" data-finding="${esc(finding.id)}">Fix →</button>`;
-    else if (finding.verdict === 'fail' && FIX_BLOCKED_REASON[it.id]) sub += `<span title="${esc(FIX_BLOCKED_REASON[it.id])}" style="cursor:help">why manual?</span>`;
+    sub += `<span class="verdict ${esc(finding.verdict)}${finding.ai ? ' ai' : ''}" title="${finding.ai ? 'AI review' : 'scanner'}">${finding.ai ? 'AI: ' : ''}${finding.verdict === 'unknown' ? 'not decided' : finding.verdict}</span><span class="scan-summary" title="${esc(finding.note || '')}">${esc(finding.summary || '')}</span>`;
+    if (finding.verdict === 'fail' && finding.fixId) sub += `<button type="button" class="fix-now" data-action="fix-plan" data-finding="${esc(finding.id)}">${finding.ai ? 'Review AI edits →' : 'Fix →'}</button>`;
+    else if (finding.verdict === 'fail' && !finding.ai && FIX_BLOCKED_REASON[it.id]) sub += `<span title="${esc(FIX_BLOCKED_REASON[it.id])}" style="cursor:help">why manual?</span>`;
     if (finding.evidenceUrl && st !== 'done') sub += `<a href="${esc(finding.evidenceUrl)}" target="_blank" rel="noopener">evidence ↗</a>`;
+  }
+  if (API && st !== 'na' && siteConnected(site.id)) {
+    const busy = ui.busy['ai:' + site.id + ':' + it.id] || (ui.aiRun && ui.aiRun.siteId === site.id && ui.aiRun.current === it.id);
+    sub += `<button type="button" class="ai-btn" data-action="ai-review" data-item="${it.id}" ${busy ? 'disabled' : ''} title="Have the AI inspect the live site for this item and propose edits">${busy ? 'reviewing…' : (finding?.ai ? 'AI review again' : 'AI review')}</button>`;
   }
   if (st === 'pending' && !finding) {
     if (openReq) {
@@ -595,6 +601,10 @@ document.addEventListener('click', e => {
     case 'conn-test': testConnection(); break;
     case 'conn-disconnect': disconnectSite(); break;
     case 'fix-plan': openPlan(d.finding); break;
+    case 'ai-review': if (s.sites[ui.siteId]) aiReview(ui.siteId, d.item); break;
+    case 'ai-audit': if (s.sites[ui.siteId]) startAiAudit(ui.siteId, d.scope || 'pending'); break;
+    case 'ai-audit-stop': if (ui.aiRun) { ui.aiRun.stop = true; render(); } break;
+    case 'ai-clear-key': clearAiKey(); break;
     case 'fix-revert': revertOps([d.op]); break;
     case 'toggle-pause': togglePause(!ui.connection[ui.siteId]?.paused); break;
     case 'sign-out': auth.signOut().then(() => location.reload()); break;
@@ -622,10 +632,16 @@ function exportJson(s) {
 }
 
 /* ================= automation (API backend only) ================= */
+/** The most recent verdict for an item: the deterministic scanner's or an AI review's, whichever is newer. */
 function findingForItem(itemId) {
-  const check = ITEM_CHECKS[itemId]; if (!check) return null;
-  return (ui.findings[ui.siteId] || []).find(f => f.checkId === check) || null;
+  const all = ui.findings[ui.siteId] || [];
+  const check = ITEM_CHECKS[itemId];
+  const scan = check ? all.find(f => f.checkId === check) : null;
+  const ai = all.find(f => f.checkId === 'ai:' + itemId) || null;
+  if (scan && ai) return new Date(ai.createdAt) > new Date(scan.createdAt) ? ai : scan;
+  return ai || scan || null;
 }
+const siteConnected = (siteId) => !!ui.connection[siteId]?.connected;
 async function api(method, path, body) {
   try { return await adapter.call(method, path, body); }
   catch (e) { toast(e instanceof ApiError ? e.message : 'Request failed: ' + e.message); throw e; }
@@ -670,14 +686,14 @@ function renderAutomation(s, site) {
     const canFix = f.verdict === 'fail' && f.fixId;
     const reason = f.verdict === 'fail' && !f.fixId ? (FIX_BLOCKED_REASON[f.itemIds[0]] || '') : '';
     return `<tr>
-      <td class="mono">${esc(f.checkId)}<div class="details">${f.itemIds.map(esc).join(', ')}</div></td>
-      <td><span class="verdict ${esc(f.verdict)}">${f.verdict === 'unknown' ? 'not checked' : f.verdict}</span></td>
+      <td class="mono">${esc(f.ai ? 'AI review' : f.checkId)}<div class="details">${f.itemIds.map(esc).join(', ')}</div></td>
+      <td><span class="verdict ${esc(f.verdict)}${f.ai ? ' ai' : ''}">${f.verdict === 'unknown' ? (f.ai ? 'not decided' : 'not checked') : f.verdict}</span></td>
       <td><div class="summary">${esc(f.summary || '')}</div>${f.note ? `<div class="details">${esc(f.note)}</div>` : ''}
         ${f.details && f.details.length ? `<details><summary class="details">${f.details.length} detail${f.details.length === 1 ? '' : 's'}</summary><div class="details">${f.details.slice(0, 25).map(d => `<div>${esc(d.url || d.name || d.detail || '')}${d.url && d.detail ? ' — ' + esc(d.detail) : ''}</div>`).join('')}${f.details.length > 25 ? `<div>… ${f.details.length - 25} more</div>` : ''}</div></details>` : ''}
       </td>
       <td class="mono">${M.relTime(f.createdAt)}</td>
       <td>${f.evidenceUrl ? `<a href="${esc(f.evidenceUrl)}" target="_blank" rel="noopener" class="btn-mini">evidence ↗</a> ` : ''}
-          ${canFix ? `<button class="fix-now" data-action="fix-plan" data-finding="${esc(f.id)}">Fix →</button>` : (reason ? `<span class="tier check" title="${esc(reason)}" style="cursor:help">manual</span>` : '')}</td>
+          ${canFix ? `<button class="fix-now" data-action="fix-plan" data-finding="${esc(f.id)}">${f.ai ? 'Review AI edits →' : 'Fix →'}</button>` : (reason ? `<span class="tier check" title="${esc(reason)}" style="cursor:help">manual</span>` : '')}</td>
     </tr>`;
   }).join('') : `<tr><td colspan="5" class="empty-note">No scan results yet. ${running ? 'A scan is in progress.' : 'Click <b>Scan now</b>.'}</td></tr>`;
   const opRows = ops.length ? ops.slice(0, 100).map(o => `<tr class="op-row">
@@ -687,7 +703,15 @@ function renderAutomation(s, site) {
       <td class="mono">${M.relTime(o.appliedAt || o.createdAt)}</td>
       <td>${o.status === 'applied' && !o.irreversible ? `<button class="btn-mini danger" data-action="fix-revert" data-op="${esc(o.id)}">Revert</button>` : (o.irreversible && o.status === 'applied' ? '<span class="tier" title="This change cannot be undone">irreversible</span>' : '')}</td>
     </tr>`).join('') : '<tr><td colspan="5" class="empty-note">No fixes applied yet.</td></tr>';
-  $('#automation-body').innerHTML = bar + `
+  const run = ui.aiRun && ui.aiRun.siteId === site.id ? ui.aiRun : null;
+  const aiConfigured = ui.ai ? ui.ai.configured : null;
+  const aiBar = `<div class="scan-bar">
+      <b>✦ AI audit</b> ${aiConfigured === false ? '— <button class="link-btn" data-action="nav" data-view="ai" style="padding:2px 8px">add an API key first</button>' : 'lets the model inspect the live site for every pending item and draft the fixes'}${ui.ai?.autoApply ? ' · <b>auto-apply is ON</b>' : ' · edits wait for your approval'}
+      <span class="spacer"></span>
+      ${run ? `<span class="ai-progress" style="margin:0">${run.done}/${run.total} reviewed · ${run.pass} pass · ${run.fail} fail · ${run.unknown} undecided${run.current ? ` · now: ${esc(run.current)}` : ''}${run.stop ? ' · stopping…' : ''}</span><button class="btn-mini danger" data-action="ai-audit-stop" ${run.stop ? 'disabled' : ''}>Stop</button>`
+          : `<button class="btn-mini" data-action="ai-audit" data-scope="critical" ${aiConfigured === false ? 'disabled' : ''}>Review critical items</button><button class="link-btn" data-action="ai-audit" data-scope="pending" ${aiConfigured === false ? 'disabled' : ''}>Review all pending items</button>`}
+    </div>`;
+  $('#automation-body').innerHTML = bar + aiBar + `
     <div class="card"><div class="card-head"><h3>Scan results</h3><span class="hint">${findings.filter(f => f.verdict === 'fail').length} failing · ${findings.filter(f => f.verdict === 'pass').length} passing · ${findings.filter(f => f.verdict === 'unknown').length} could not run</span></div>
       <div class="card-body"><table class="auto-table"><thead><tr><th>Check</th><th>Verdict</th><th>Result</th><th>When</th><th></th></tr></thead><tbody>${rows}</tbody></table></div></div>
     <div class="card"><div class="card-head"><h3>Applied fixes</h3><span class="hint">every change stores what it replaced — revert restores it</span></div>
@@ -806,7 +830,7 @@ async function openPlan(findingId) {
     $('#plan-modal-title').textContent = plan.label;
     $('#plan-head').innerHTML = `<b>${esc(plan.itemId)}</b> ${esc(M.itemLabel(plan.itemId))}${f ? ` — <span style="color:var(--muted)">${esc(f.summary)}</span>` : ''}`;
     $('#plan-ops').innerHTML = plan.ops.length ? plan.ops.map((op, i) => `<label class="plan-op"><input type="checkbox" name="op" value="${i}" checked>
-        <div style="flex:1"><div>${esc(op.describe)}${op.lowConfidence ? '<span class="flag">derived — check it</span>' : ''}${op.irreversible ? '<span class="flag">irreversible</span>' : ''}</div>
+        <div style="flex:1"><div>${esc(op.describe)}${op.lowConfidence ? '<span class="flag">AI is unsure — check it</span>' : ''}${op.changedSinceReview ? '<span class="flag">changed on the site since the review</span>' : ''}${op.irreversible ? '<span class="flag">irreversible</span>' : ''}</div>
         ${op.target?.url ? `<div class="details" style="font-size:11px;color:var(--muted)">${esc(op.target.url)}</div>` : ''}
         <div class="diff"><span class="del">− ${esc(short(op.before))}</span><span class="add">+ ${esc(short(op.after))}</span></div></div></label>`).join('')
       : '<div class="empty-note">Nothing to change — the fixer could not derive a safe edit for these findings.</div>';
@@ -836,6 +860,94 @@ async function revertOps(opIds) {
   try { const r = await api('POST', `/sites/${ui.siteId}/fixes/revert`, { opIds }); toast(`${r.reverted.length} reverted${r.failed.length ? `, ${r.failed.length} could not be` : ''}.`); await adapter.sync(); refreshAutomation(ui.siteId); render(); } catch { /* toasted */ }
 }
 
+/* ================= AI review (API backend only) ================= */
+async function loadAiSettings(force = false) {
+  if (!API || (ui.ai && !force)) return ui.ai;
+  try { ui.ai = await adapter.call('GET', '/ai/settings'); }
+  catch (e) { ui.ai = { configured: false, error: e.message, provider: 'anthropic', model: '', autoApply: false }; }
+  $('#count-ai').hidden = ui.ai.configured;
+  if (ui.view === 'ai' || ui.view === 'site') render();
+  return ui.ai;
+}
+function renderAiSettings() {
+  const a = ui.ai;
+  if (!API) { $('#ai-status').textContent = 'AI review needs the API backend (js/config.js backend: "api").'; return; }
+  if (!a) { $('#ai-status').textContent = 'loading…'; loadAiSettings(); return; }
+  $('#ai-status').textContent = a.error ? `could not load: ${a.error}` : (a.configured ? `key ${a.keySource === 'env' ? 'from server environment' : 'stored'} · ${a.model}` : 'no key configured');
+  if (document.activeElement && $('#ai-form').contains(document.activeElement)) return;      // don't clobber typing
+  $('#ai-provider').value = a.provider || 'anthropic';
+  $('#ai-model').value = a.model || '';
+  $('#ai-model').placeholder = a.defaultModels?.[$('#ai-provider').value] || '';
+  $('#ai-auto-apply').checked = !!a.autoApply;
+  $('#ai-key').value = '';
+  $('#ai-key-note').textContent = a.configured ? `A key ending in ${a.keyMasked?.slice(-4) || '…'} is ${a.keySource === 'env' ? 'set in the server environment' : 'stored for this agency'}. Leave this blank to keep it.` : 'No key yet. Paste one and save.';
+}
+$('#ai-provider').addEventListener('change', () => { $('#ai-model').placeholder = ui.ai?.defaultModels?.[$('#ai-provider').value] || ''; });
+$('#ai-form').addEventListener('submit', async e => {
+  e.preventDefault();
+  const btn = $('#ai-save-btn'); btn.disabled = true; btn.textContent = 'Saving & testing…'; $('#ai-error').textContent = '';
+  const key = $('#ai-key').value.trim();
+  try {
+    const r = await api('PUT', '/ai/settings', { provider: $('#ai-provider').value, model: $('#ai-model').value.trim(), autoApply: $('#ai-auto-apply').checked, ...(key ? { apiKey: key } : {}) });
+    ui.ai = r; $('#count-ai').hidden = r.configured; $('#ai-key').value = '';
+    if (r.test) { if (r.test.ok) toast(`Key works — ${r.test.model} answered.`); else $('#ai-error').textContent = `Saved, but the key test failed: ${r.test.error}`; }
+    else toast('Saved. No key configured yet.');
+    render();
+  } catch (e2) { $('#ai-error').textContent = e2.message; }
+  finally { btn.disabled = false; btn.textContent = 'Save & test key'; }
+});
+async function clearAiKey() {
+  if (!confirm('Remove the stored API key? Reviews will fall back to the server environment key, if any.')) return;
+  try { ui.ai = await api('PUT', '/ai/settings', { provider: $('#ai-provider').value, model: $('#ai-model').value.trim(), autoApply: $('#ai-auto-apply').checked, apiKey: '' }); $('#count-ai').hidden = ui.ai.configured; render(); toast('Stored key removed.'); } catch { /* toasted */ }
+}
+
+/** One item: run the review, merge the finding, open the diff when edits were proposed. */
+async function aiReview(siteId, itemId, { quiet = false } = {}) {
+  const key = 'ai:' + siteId + ':' + itemId;
+  if (ui.busy[key]) return null;
+  ui.busy[key] = true; render();
+  try {
+    const r = await api('POST', `/sites/${siteId}/ai/review`, { itemId });
+    mergeFinding(siteId, r.finding);
+    await adapter.sync();
+    if (!quiet) {
+      const f = r.finding;
+      if (r.applied?.applied) toast(`${itemId}: ${f.verdict} — ${r.applied.applied.length} edit${r.applied.applied.length === 1 ? '' : 's'} applied automatically${r.applied.failed?.length ? `, ${r.applied.failed.length} failed` : ''}.`);
+      else if (r.applied?.error) toast(`${itemId}: ${f.verdict} — auto-apply skipped: ${r.applied.error}`);
+      else if (f.verdict === 'fail' && f.fixId) { toast(`${itemId}: fail — ${f.details.length} edit${f.details.length === 1 ? '' : 's'} proposed.`); openPlan(f.id); }
+      else toast(`${itemId}: ${f.verdict === 'unknown' ? 'could not decide' : f.verdict} — ${f.summary}`);
+    }
+    return r;
+  } catch { return null; }
+  finally { ui.busy[key] = false; refreshAutomation(siteId); render(); }
+}
+function mergeFinding(siteId, finding) {
+  const list = (ui.findings[siteId] || []).filter(f => f.checkId !== finding.checkId);
+  ui.findings[siteId] = [finding, ...list];
+}
+
+/** Every pending item (or only the critical ones), one review at a time, until done or stopped. */
+async function startAiAudit(siteId, scope) {
+  if (ui.aiRun) return;
+  const site = store.state.sites[siteId];
+  const items = CHECKLIST.flatMap(c => c.items).filter(it => M.stateOf(site.items, it.id) === 'pending' && (scope !== 'critical' || it.crit));
+  if (!items.length) { toast('Nothing pending to review.'); return; }
+  if (!confirm(`Review ${items.length} pending item${items.length === 1 ? '' : 's'} with the AI? Each review is one model call sequence (roughly 30–60 s each).${ui.ai?.autoApply ? '\n\nAuto-apply is ON: proposed edits will be written to the site as they are found.' : '\n\nProposed edits will wait for your approval.'}`)) return;
+  ui.aiRun = { siteId, total: items.length, done: 0, pass: 0, fail: 0, unknown: 0, current: null, stop: false };
+  render();
+  for (const it of items) {
+    if (ui.aiRun.stop || !store.state.sites[siteId]) break;
+    ui.aiRun.current = it.id; render();
+    const r = await aiReview(siteId, it.id, { quiet: true });
+    ui.aiRun.done++;
+    if (r) ui.aiRun[r.finding.verdict === 'pass' ? 'pass' : r.finding.verdict === 'fail' ? 'fail' : 'unknown']++;
+    else ui.aiRun.unknown++;
+  }
+  const run = ui.aiRun; ui.aiRun = null;
+  refreshAutomation(siteId); render();
+  toast(`AI audit ${run.stop ? 'stopped' : 'finished'} — ${run.done} reviewed · ${run.pass} pass · ${run.fail} fail · ${run.unknown} undecided. Failing items with edits show “Review AI edits →”.`);
+}
+
 /* ---------- sign-in ---------- */
 function showAuth(show) { $('#auth-overlay').classList.toggle('open', show); if (show) setTimeout(() => $('#auth-email').focus(), 0); }
 $('#auth-form').addEventListener('submit', async e => {
@@ -853,6 +965,7 @@ store.subscribe(() => render());
 async function boot() {
   await auth.init();
   $('#sign-out-btn').hidden = !(API && auth.mode === 'supabase');
+  $('#nav-ai').hidden = !API;
   if (API && auth.mode === 'supabase' && !auth.isSignedIn()) {
     showAuth(true);
     await new Promise(resolve => auth.onChange(s => { if (s) resolve(); }));
@@ -861,6 +974,7 @@ async function boot() {
   auth.onChange(s => { if (API && auth.mode === 'supabase' && !s) location.reload(); });
   await store.ready;
   routeFromHash(); render();
+  if (API) loadAiSettings();
 }
 boot().catch(err => {
   console.error(err);

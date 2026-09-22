@@ -549,6 +549,17 @@
   .auto-table details summary { cursor: pointer; }
   .auto-table .op-row td { font-size: 12px; }
   .auto-table .status-applied { color: var(--teal); } .auto-table .status-reverted { color: var(--muted); } .auto-table .status-failed { color: var(--coral); }
+  /* ---- AI settings + review ---- */
+  .ai-form label { display: block; font-size: 11.5px; color: var(--muted); margin: 12px 0 5px; }
+  .ai-form input[type=text], .ai-form input[type=password], .ai-form select { width: 100%; box-sizing: border-box; font: inherit; font-size: 13px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--paper); color: var(--ink); }
+  .ai-form .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0 12px; }
+  .ai-form .check-row { display: flex; gap: 8px; align-items: flex-start; font-size: 12.5px; color: var(--ink); margin: 14px 0 4px; line-height: 1.5; }
+  .ai-form .check-row input { margin-top: 3px; }
+  .ai-btn { font-family: var(--font-mono); font-size: 10.5px; padding: 2px 8px; border-radius: 20px; border: 1px solid var(--line); background: transparent; color: var(--ink); cursor: pointer; }
+  .ai-btn:hover { border-color: var(--ink); }
+  .ai-btn[disabled] { opacity: .5; cursor: progress; }
+  .verdict.ai { background: #efe6ff; color: #5b34b1; }
+  .ai-progress { font-size: 12.5px; color: var(--muted); margin: 0 0 12px; }
   .scan-bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 12.5px; color: var(--muted); padding: 10px 14px; border: 1px dashed var(--line); border-radius: 8px; margin-bottom: 14px; }
   .scan-bar.paused { border-color: var(--coral); color: var(--coral); }
   .auth-overlay { position: fixed; inset: 0; background: var(--paper); display: none; align-items: center; justify-content: center; z-index: 100; padding: 20px; }
@@ -592,6 +603,7 @@
 
       <div class="nav-label">Configure</div>
       <button class="nav-item" data-action="nav" data-view="templates"><span class="ic" aria-hidden="true">☰</span> Checklist Template</button>
+      <button class="nav-item" data-action="nav" data-view="ai" id="nav-ai" hidden><span class="ic" aria-hidden="true">✦</span> AI Settings <span class="count" id="count-ai" hidden>!</span></button>
     </nav>
 
     <div class="sidebar-foot">
@@ -752,6 +764,43 @@
 
       <div class="subview" id="sub-automation">
         <div id="automation-body"></div>
+      </div>
+    </section>
+
+    <!-- ================= AI SETTINGS ================= -->
+    <section class="view" id="view-ai" aria-labelledby="ai-title">
+      <div class="topbar">
+        <div>
+          <h1 id="ai-title">AI Settings</h1>
+          <div class="sub">The model that reviews checklist items against the live site and drafts the fixes.</div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-head"><h3>Model provider</h3><span class="hint" id="ai-status">loading…</span></div>
+        <form class="card-body ai-form" id="ai-form" style="padding:0 16px 16px">
+          <div class="grid2">
+            <div><label for="ai-provider">Provider</label>
+              <select id="ai-provider"><option value="anthropic">Anthropic (Claude)</option><option value="openai">OpenAI</option></select></div>
+            <div><label for="ai-model">Model</label><input type="text" id="ai-model" placeholder="claude-opus-5" autocomplete="off"></div>
+          </div>
+          <label for="ai-key">API key</label>
+          <input type="password" id="ai-key" placeholder="paste a new key to replace the stored one" autocomplete="new-password">
+          <div class="note" id="ai-key-note"></div>
+          <label class="check-row" for="ai-auto-apply"><input type="checkbox" id="ai-auto-apply"> <b>Apply AI edits automatically</b> — write proposed edits to the site as soon as a review fails, without the before/after approval step. Every edit is still snapshotted and can be reverted. Leave off until you trust the results.</label>
+          <div class="note">The key is encrypted with the server's ENCRYPTION_KEY before it is stored and is never shown again. Anthropic keys start with <code>sk-ant-</code>; get one at console.anthropic.com. With no key here, the server's ANTHROPIC_API_KEY / OPENAI_API_KEY environment variable is used if set.</div>
+          <div class="modal-actions" style="justify-content:flex-start">
+            <button type="submit" class="link-btn" id="ai-save-btn">Save & test key</button>
+            <button type="button" class="btn-ghost" data-action="ai-clear-key">Remove stored key</button>
+          </div>
+          <div class="conn-error" id="ai-error"></div>
+        </form>
+      </div>
+      <div class="card">
+        <div class="card-head"><h3>How AI review works</h3></div>
+        <div class="card-body note" style="line-height:1.6">
+          On any site, <b>AI review</b> on a checklist item (or <b>AI audit</b> on the Automation tab for every pending item) has the model inspect the live site through read-only tools: pages, products, media, categories, settings and public URLs. It returns pass / fail / could-not-decide with a one-line summary, its reasoning, and an evidence URL, and for a fail it proposes concrete edits to titles, bodies, excerpts, SEO titles and descriptions, canonicals, robots, image alt text and term descriptions.<br><br>
+          Nothing is written until you approve the before/after diff (unless auto-apply is on). Every applied edit stores what it replaced and can be reverted from the Automation tab. The model cannot delete anything, touch plugins, themes, users or server settings, and is told never to invent regulatory facts, prices or specifications.
+        </div>
       </div>
     </section>
 
