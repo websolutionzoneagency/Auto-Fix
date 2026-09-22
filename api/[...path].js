@@ -44,6 +44,23 @@ import { timingSafeEqual } from 'node:crypto';
 
 const inlineScanBudgetMs = () => Number(process.env.INLINE_SCAN_BUDGET_MS || 20000);
 
+/** A setup problem the operator can act on is named in the response; anything else stays "internal error"
+ *  (the full error is in the function log either way). Never echoes the connection string. */
+export function explainServerError(e) {
+  const msg = String(e?.message || '');
+  const code = String(e?.code || '');
+  if (/DATABASE_URL is not set/.test(msg)) return 'DATABASE_URL is not set on the server (Vercel → Settings → Environment Variables; redeploy after adding it)';
+  if (/ENCRYPTION_KEY/.test(msg)) return msg;
+  if (code === '42P01') return `database schema is not installed (${msg.replace(/^relation /, '')}): run db/supabase.sql in the Supabase SQL editor`;
+  if (code === '28P01' || code === '28000') return 'the database rejected the credentials in DATABASE_URL (check the password; URL-encode special characters)';
+  if (code === '3D000') return 'DATABASE_URL names a database that does not exist';
+  if (['ENOTFOUND', 'ECONNREFUSED', 'ETIMEDOUT', 'ECONNRESET', 'EAI_AGAIN'].includes(code) || /getaddrinfo|connect ETIMEDOUT|timeout expired/i.test(msg)) {
+    return 'cannot reach the database host in DATABASE_URL (use the Supabase pooler connection string)';
+  }
+  if (/SSL|TLS|certificate/i.test(msg)) return 'TLS handshake with the database failed (DATABASE_URL should use the Supabase pooler, no sslmode override)';
+  return 'internal error';
+}
+
 export default async function handler(req, res) {
   const segs = [].concat(req.query?.path || []);
   const path = '/' + segs.join('/');
@@ -216,7 +233,7 @@ export default async function handler(req, res) {
     if (e instanceof AuthError) return json(res, e.status, { error: e.message });
     if (e.status) return json(res, e.status, { error: e.message });
     console.error('[rankops api]', e);
-    return json(res, 500, { error: 'internal error' });
+    return json(res, 500, { error: explainServerError(e) });
   }
 }
 

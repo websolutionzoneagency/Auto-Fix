@@ -69,3 +69,12 @@ test('authenticate accepts an ES256 user with a membership', async () => {
   assert.deepEqual(auth, { userId: 'u1', email: null, agencyId: 'ag', role: 'owner', mode: 'supabase' });
   await assert.rejects(authenticate(req, { env, fetchImpl, lookupMembership: async () => [] }), /belongs to no agency/);
 });
+
+test('server errors are explained when they are a setup problem', async () => {
+  const { explainServerError } = await import('../api/[...path].js');
+  assert.match(explainServerError(new Error('DATABASE_URL is not set')), /DATABASE_URL is not set/);
+  assert.match(explainServerError(Object.assign(new Error('relation "snapshots" does not exist'), { code: '42P01' })), /db\/supabase\.sql/);
+  assert.match(explainServerError(Object.assign(new Error('password authentication failed'), { code: '28P01' })), /credentials/);
+  assert.match(explainServerError(Object.assign(new Error('getaddrinfo ENOTFOUND x'), { code: 'ENOTFOUND' })), /cannot reach/);
+  assert.equal(explainServerError(new Error('postgres://user:secret@host/db exploded')), 'internal error');
+});
