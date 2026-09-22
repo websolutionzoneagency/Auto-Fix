@@ -61,9 +61,20 @@ export function explainServerError(e) {
   return 'internal error';
 }
 
+/** The route under /api. Vercel hands the catch-all segments to the function under a query key that has
+ *  varied between runtimes ("path", "...path", array or string), so fall back to the request URL itself. */
+export function requestPath(req) {
+  const q = req.query || {};
+  const raw = q.path ?? q['...path'];
+  if (raw !== undefined && raw !== null && String(raw) !== '') return '/' + [].concat(raw).join('/').replace(/^\/+/, '');
+  let pathname = '/';
+  try { pathname = new URL(req.url || '/', 'http://x').pathname; } catch { /* keep '/' */ }
+  if (pathname.includes('[')) return '/';                         // the rewritten function path, not the request
+  return pathname.replace(/^\/api(?=\/|$)/, '').replace(/\/+$/, '') || '/';
+}
+
 export default async function handler(req, res) {
-  const segs = [].concat(req.query?.path || []);
-  const path = '/' + segs.join('/');
+  const path = requestPath(req);
   const method = req.method;
 
   try {

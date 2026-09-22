@@ -78,3 +78,13 @@ test('server errors are explained when they are a setup problem', async () => {
   assert.match(explainServerError(Object.assign(new Error('getaddrinfo ENOTFOUND x'), { code: 'ENOTFOUND' })), /cannot reach/);
   assert.equal(explainServerError(new Error('postgres://user:secret@host/db exploded')), 'internal error');
 });
+
+test('the route is found whichever way Vercel passes the catch-all segments', async () => {
+  const { requestPath } = await import('../api/[...path].js');
+  assert.equal(requestPath({ query: { path: ['state'] } }), '/state');
+  assert.equal(requestPath({ query: { path: 'sites/abc/scan' } }), '/sites/abc/scan');
+  assert.equal(requestPath({ query: { '...path': 'state' }, url: '/api/[...path]?...path=state' }), '/state');
+  assert.equal(requestPath({ query: { since: '3' }, url: '/api/actions?since=3' }), '/actions');
+  assert.equal(requestPath({ query: {}, url: '/api/[...path]' }), '/');
+  assert.equal(requestPath({ query: {}, url: '/api' }), '/');
+});
