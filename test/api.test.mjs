@@ -24,7 +24,7 @@ test.before(async () => {
   process.env.SUPABASE_JWT_SECRET = JWT_SECRET;
   process.env.CRON_SECRET = 'cron-secret';
   process.env.INLINE_SCAN_BUDGET_MS = '30000';
-  ({ default: handler } = await import('../api/[...path].js'));
+  ({ default: handler } = await import('../api/index.js'));
   ({ getPool: pool } = await import('../api/_lib/db.js'));
   wp = await startMockWp(defaultFixture());
 });

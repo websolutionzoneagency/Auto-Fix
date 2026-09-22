@@ -1,4 +1,5 @@
 // RankOps API — one Vercel serverless function serving everything under /api.
+// vercel.json rewrites /api/* here; the route is read from the request (see requestPath).
 //
 //   GET    /health                                  liveness (public)
 //   GET    /me                                      who am I, which agency, what role
@@ -69,7 +70,7 @@ export function requestPath(req) {
   if (raw !== undefined && raw !== null && String(raw) !== '') return '/' + [].concat(raw).join('/').replace(/^\/+/, '');
   let pathname = '/';
   try { pathname = new URL(req.url || '/', 'http://x').pathname; } catch { /* keep '/' */ }
-  if (pathname.includes('[')) return '/';                         // the rewritten function path, not the request
+  if (pathname.includes('[') || /^\/api\/index$/.test(pathname)) return '/';   // the rewrite target, not the request
   return pathname.replace(/^\/api(?=\/|$)/, '').replace(/\/+$/, '') || '/';
 }
 
