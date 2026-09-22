@@ -864,6 +864,6 @@ async function boot() {
 }
 boot().catch(err => {
   console.error(err);
-  document.body.insertAdjacentHTML('afterbegin', `<div role="alert" style="padding:16px 20px;background:#f3ddd6;color:#c0503a;font:13px sans-serif">RankOps couldn't load its data: ${esc(err.message)}. ${adapter.name === 'api' ? 'Check the API token and DATABASE_URL, or switch js/config.js back to local.' : ''}</div>`);
+  document.body.insertAdjacentHTML('afterbegin', `<div role="alert" style="padding:16px 20px;background:#f3ddd6;color:#c0503a;font:13px sans-serif">RankOps couldn't load its data: ${esc(err.message)}. ${adapter.name === 'api' ? 'Check the Vercel environment variables (DATABASE_URL, ENCRYPTION_KEY) and redeploy after changing them, check the Supabase schema and your agency membership, or switch js/config.js back to local.' : ''}</div>`);
 });
 window.rankops = { store, ui, go, adapter, auth };   // exposed for debugging and the browser test
