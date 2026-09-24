@@ -95,4 +95,9 @@ test('the route is found whichever way Vercel passes the catch-all segments', as
   assert.equal(requestPath({ query: { since: '3' }, url: '/api/actions?since=3' }), '/actions');
   assert.equal(requestPath({ query: {}, url: '/api/index' }), '/');
   assert.equal(requestPath({ query: {}, url: '/api' }), '/');
+  // The handler derives its `segs` array (used by every /sites/:id/... route) from this same path —
+  // pin the split here so a route regression shows up without needing a live database.
+  const segsOf = (req) => requestPath(req).split('/').filter(Boolean);
+  assert.deepEqual(segsOf({ query: { path: ['sites', 's1', 'connection'] } }), ['sites', 's1', 'connection']);
+  assert.deepEqual(segsOf({ query: { '...path': 'sites/s1/fixes/apply' } }), ['sites', 's1', 'fixes', 'apply']);
 });
