@@ -392,7 +392,7 @@ async function planFromFinding(A, siteId, findingId) {
   const conn = await repo.getConnection(A, siteId, { withCredentials: true });
   if (!conn) { const e = new Error('site is not connected'); e.status = 409; throw e; }
   const connector = buildConnector(conn, { agencyId: A });
-  const plan = await planFix(fixId, { connector, site: { id: siteId, name: conn.settings?.organizationName, domain: new URL(conn.baseUrl).host, paused: conn.paused },
+  const plan = await planFix(fixId, { connector, site: { id: siteId, name: conn.settings?.organizationName, domain: new URL(conn.baseUrl).host, paused: conn.paused, companionPlugin: !!conn.capabilities?.companionPlugin },
     findings: finding.details, ctx: conn.settings, seoPlugin: conn.seoPlugin || 'Rank Math' });
   return { plan: { ...plan, findingId, paused: conn.paused }, conn, connector, finding };
 }

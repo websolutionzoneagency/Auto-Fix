@@ -196,7 +196,13 @@ test('click-depth and faceted-urls', async (t) => {
   assert.equal(depth.verdict, 'fail', 'populated category is not linked from the homepage');
   assert.ok(depth.findings.some(f => f.id === 40));
   const facet = await h.run('faceted-urls');
-  assert.equal(facet.verdict, 'unknown');   // the mock 404s the faceted URL
+  assert.equal(facet.verdict, 'fail', 'a filtered category page with no noindex and no clean canonical is indexable');
+  const h2 = await harness(fx => {
+    fx.pagesHtml['/product-category/disposables/'].body = fx.pagesHtml['/product-category/disposables/'].body
+      .replace('</head>', '<link rel="canonical" href="https://vapewizarddxb.com/product-category/disposables/"></head>');
+  });
+  t.after(() => h2.wp.close());
+  assert.equal((await h2.run('faceted-urls')).verdict, 'pass', 'canonicalising facets to the clean URL passes');
 });
 
 test('per-item schema checks: Organization on the homepage, breadcrumbs on deep pages, product schema on products', async (t) => {
@@ -244,4 +250,22 @@ test('f2 is never ticked by a live sitemap; im5 needs image entries', async (t) 
   const h3 = await harness(fx => { delete fx.pagesHtml['/wp-sitemap.xml']; });
   t.after(() => h3.wp.close());
   assert.equal((await h3.run('sitemap-submitted')).verdict, 'fail', 'no sitemap at all is a real failure');
+});
+
+test('SEO-field fixes need the companion plugin, and an ignored write is never reported as applied', async (t) => {
+  const { planFix, applyPlan } = await import('../api/_lib/fixes.js');
+  const h = await harness(); t.after(() => h.wp.close());
+  const thin = await h.run('thin-archives');
+  const blocked = await planFix('noindex-thin-archive', { connector: h.connector, site: { companionPlugin: false }, findings: thin.findings });
+  assert.equal(blocked.ops.length, 0);
+  assert.match(blocked.blocked[0].reason, /companion plugin/);
+  // A site that accepts the request but drops the unregistered field: the write must fail verification.
+  const dropping = await harness(); t.after(() => dropping.wp.close());
+  dropping.wp.state.categories.forEach(c => { delete c.meta; });
+  const plan = await planFix('noindex-thin-archive', { connector: dropping.connector, site: {}, findings: thin.findings });
+  const origUpdate = dropping.connector.updateTerm.bind(dropping.connector);
+  dropping.connector.updateTerm = async (id, patch, tax) => { const row = await origUpdate(id, {}, tax); delete row.meta; return row; };
+  const res = await applyPlan({ connector: dropping.connector, site: {}, plan });
+  assert.equal(res.applied.length, 0);
+  assert.match(res.failed[0].error, /did not return .*companion plugin/);
 });

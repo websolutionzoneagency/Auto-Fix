@@ -178,12 +178,21 @@ export const CHECKS = {
       const min = ctx?.thinThreshold ?? 3;
       const cats = await connector.categories({ limit: 300 }).catch(() => []);
       if (!cats.length) return unknown('No categories returned');
-      const findings = cats
-        .filter(c => (c.count ?? 0) < min && !hasNoindex(c))
-        .map(c => ({ id: c.id, name: c.name, url: c.link, count: c.count, detail: `${c.count} product(s), indexable` }));
+      // The live page's robots tag is the truth: the REST field only exists with the companion plugin,
+      // so without it a category already noindexed in Rank Math would otherwise be flagged forever.
+      const findings = [];
+      let unreadable = 0;
+      for (const c of cats.filter(c => (c.count ?? 0) < min && !hasNoindex(c)).slice(0, 40)) {
+        const page = c.link ? await connector.fetchPublic(c.link).catch(() => null) : null;
+        if (!page) { unreadable++; continue; }
+        if (page.status === 200 && /noindex/.test(metaRobots(page.text) || '')) continue;   // already noindexed live
+        if (page.status !== 200) continue;                                                 // not a live page: nothing to index
+        findings.push({ id: c.id, name: c.name, url: c.link, count: c.count, detail: `${c.count} post${c.count === 1 ? '' : 's'}, indexable` });
+      }
+      if (!findings.length && unreadable) return unknown(`${unreadable} thin categor${unreadable === 1 ? 'y' : 'ies'} could not be fetched to check their robots tag`);
       return findings.length
-        ? fail(`${findings.length} thin archive(s) still indexable (under ${min} products)`, findings)
-        : pass(`All archives either have ≥${min} products or are noindexed`);
+        ? fail(`${findings.length} thin categor${findings.length === 1 ? 'y' : 'ies'} still indexable (under ${min} posts)`, findings)
+        : pass(`Every category has ≥${min} posts or is noindexed`);
     },
   },
 

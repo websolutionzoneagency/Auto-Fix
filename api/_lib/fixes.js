@@ -18,12 +18,26 @@ function assertWritable(site) {
   if (site?.paused) throw new FixBlocked('Writes are paused for this site (kill switch is on).');
 }
 
+// Rank Math / Yoast fields are only readable and writable over the REST API once the RankOps companion
+// plugin registers them. Without it WordPress silently IGNORES the field and still answers 200, which
+// would look like a successful fix that changed nothing — so these fixes are blocked at planning time.
+const NEEDS_PLUGIN = 'Writing SEO-plugin fields needs the RankOps companion plugin on the site: copy wordpress-plugin/rankops-connector.php into wp-content/mu-plugins/, then Site settings → Test connection.';
+function requireCompanion(site) {
+  if (site && site.companionPlugin === false) throw new FixBlocked(NEEDS_PLUGIN);
+}
+/** A write "succeeded" only if the site hands the field back with the new value. */
+function metaOf(row, key) {
+  if (!row?.meta || !(key in row.meta)) throw new Error(`the site did not return the "${key}" field — ${NEEDS_PLUGIN}`);
+  return row.meta[key];
+}
+
 export const FIXES = {
   /* ---------- f7 ---------- */
   'set-canonical': {
     label: 'Set the canonical URL to the page itself',
     itemId: 'f7',
-    async plan({ finding, seoPlugin }) {
+    async plan({ finding, seoPlugin, site }) {
+      requireCompanion(site);
       const key = seoKeys(seoPlugin).canonical;
       return [{
         target: { type: finding.type || 'posts', id: finding.id, url: finding.url },
@@ -38,7 +52,7 @@ export const FIXES = {
     async apply({ connector, op, seoPlugin }) {
       const key = seoKeys(seoPlugin).canonical;
       const row = await connector.updatePost(op.target.id, { meta: { [key]: op.after } }, op.target.type);
-      return { snapshot: { field: op.field, value: op.before }, verify: row?.meta?.[key] === op.after };
+      return { snapshot: { field: op.field, value: op.before }, verify: metaOf(row, key) === op.after };
     },
     async revert({ connector, op, seoPlugin }) {
       const key = seoKeys(seoPlugin).canonical;
@@ -73,20 +87,23 @@ export const FIXES = {
   'noindex-thin-archive': {
     label: 'Noindex a thin archive',
     itemId: 'f5',
-    async plan({ finding, seoPlugin }) {
+    async plan({ finding, seoPlugin, site }) {
+      requireCompanion(site);
       const key = seoKeys(seoPlugin).robots;
       return [{
         target: { type: 'categories', id: finding.id, url: finding.url, name: finding.name },
         field: `meta.${key}`,
         before: [],
         after: ['noindex', 'follow'],
-        describe: `Noindex "${finding.name}" (${finding.count} product${finding.count === 1 ? '' : 's'})`,
+        describe: `Noindex "${finding.name}" (${finding.count} post${finding.count === 1 ? '' : 's'})`,
       }];
     },
     async apply({ connector, op, seoPlugin }) {
       const key = seoKeys(seoPlugin).robots;
       const row = await connector.updateTerm(op.target.id, { meta: { [key]: op.after } }, 'categories');
-      return { snapshot: { field: op.field, value: op.before }, verify: !!row };
+      const now = metaOf(row, key);
+      const list = Array.isArray(now) ? now : String(now || '').split(/[,\s]+/);
+      return { snapshot: { field: op.field, value: op.before }, verify: list.includes('noindex') };
     },
     async revert({ connector, op, seoPlugin }) {
       const key = seoKeys(seoPlugin).robots;
@@ -223,8 +240,9 @@ export const FIXES = {
   'ai-edit': {
     label: 'Apply AI-proposed edits',
     itemId: null,
-    async plan({ finding, connector, seoPlugin }) {
+    async plan({ finding, connector, seoPlugin, site }) {
       const op = validateOp(finding);
+      if (op.field.startsWith('meta.')) requireCompanion(site);
       const cur = await readField(connector, op.target, op.field, seoPlugin);
       if (sameValue(cur.value, op.after)) return [];
       return [{
