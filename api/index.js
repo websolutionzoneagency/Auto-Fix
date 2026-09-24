@@ -133,9 +133,16 @@ export default async function handler(req, res) {
       if (method === 'GET') return json(res, 200, await repo.getSnapshot(A));
       if (method === 'PUT') {
         requireWrite(auth);
-        const { state, origin } = await readBody(req);
+        const { state, origin, baseSeq } = await readBody(req);
         const clean = migrate(state);
         if (!clean) return json(res, 400, { error: 'invalid state (expected RankOps schema version 2)' });
+        // A full replace is only allowed from a client that has loaded the current data (import, reset,
+        // or first run on an empty agency). Anything else — e.g. a tab whose load failed and fell back to
+        // demo data — would silently overwrite the agency's real work.
+        if (baseSeq === null || baseSeq === undefined) {
+          const head = await repo.getSnapshot(A);
+          if (head.seq > 0 && head.state) return json(res, 409, { error: 'refusing to replace saved data this browser never loaded — reload the page' });
+        }
         const { seq } = await repo.applyAction(A, { type: 'state/replace', payload: { state: clean } }, { origin, actor: auth.userId });
         return json(res, 200, { seq });
       }

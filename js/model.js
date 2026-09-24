@@ -4,6 +4,11 @@ import { CHECKLIST, ITEM_INDEX } from './checklist.js';
 /* ---------- checklist item states ---------- */
 export const ITEM_STATES = ['pending', 'done', 'na'];
 
+/** What a click on an item's checkbox does: pending ↔ done, and an n/a item becomes applicable again.
+ *  N/A is set only from its own explicit control, never by clicking through the checkbox. */
+export function toggleItemState(state) {
+  return state === 'pending' ? 'done' : 'pending';
+}
 export function nextItemState(state) {
   const i = ITEM_STATES.indexOf(state);
   return ITEM_STATES[(i + 1) % ITEM_STATES.length];

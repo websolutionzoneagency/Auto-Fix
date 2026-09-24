@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { CHECKLIST, TOTAL_ITEMS, CRITICAL } from '../js/checklist.js';
-import { nextItemState, stateOf, pctFor, catStats, openCritCount, healthFor, flagCounts, sortFixReqs, columnOf, escapeHtml, relTime, clientSummary, fleetSummary } from '../js/model.js';
+import { nextItemState, toggleItemState, stateOf, pctFor, catStats, openCritCount, healthFor, flagCounts, sortFixReqs, columnOf, escapeHtml, relTime, clientSummary, fleetSummary } from '../js/model.js';
 import { emptyState, reduce, makeClient, makeSite, makeFlag, makeFixReq, migrate, createStore } from '../js/store.js';
 import { demoState } from '../js/seed.js';
 
@@ -17,6 +17,10 @@ test('item state cycles pending → done → na → pending', () => {
   assert.equal(nextItemState('pending'), 'done');
   assert.equal(nextItemState('done'), 'na');
   assert.equal(nextItemState('na'), 'pending');
+  // The checkbox only toggles; n/a needs its own control, so a double click can't hide an item.
+  assert.equal(toggleItemState('pending'), 'done');
+  assert.equal(toggleItemState('done'), 'pending');
+  assert.equal(toggleItemState('na'), 'pending');
   assert.equal(stateOf({}, 'f1'), 'pending');
   assert.equal(stateOf({ f1: 'garbage' }, 'f1'), 'pending');
 });

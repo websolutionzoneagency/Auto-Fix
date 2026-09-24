@@ -130,7 +130,8 @@ export async function reviewItem({ ai, connector, conn, site, itemId, budgetMs =
   if (!review && !lastText && turns >= MAX_TURNS) lastText = `no verdict after ${MAX_TURNS} turns`;
 
   if (!review) {
-    return { verdict: 'unknown', summary: `AI review did not reach a verdict — ${lastText || 'no response'}`.slice(0, 500), rationale: lastText, evidenceUrl: null, ops: [], rejected: [], turns, usage, transcript };
+    // The reason is already in the summary; repeating it as the rationale printed it twice in the UI.
+    return { verdict: 'unknown', summary: `AI review did not reach a verdict — ${lastText || 'no response'}`.slice(0, 500), rationale: '', evidenceUrl: null, ops: [], rejected: [], turns, usage, transcript };
   }
   const verdict = ['pass', 'fail', 'unknown'].includes(review.verdict) ? review.verdict : 'unknown';
   const ops = [], rejected = [];

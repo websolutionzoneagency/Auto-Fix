@@ -9,12 +9,14 @@ const ago = (ms) => new Date(Date.now() - ms).toISOString();
 // Small stable hash so "done" items are a fixed pseudo-random subset per site.
 function hash(str) { let h = 2166136261; for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 16777619); } return (h >>> 0) % 100; }
 
-function seedItems(state, site, { donePct, naCats = [], critPending = [], forceDone = [] }) {
+// `keepPending`: items that must stay open — critical gaps, and anything with an open fix request
+// (a done item with a queued fix contradicts itself; the reducer would close that request).
+function seedItems(state, site, { donePct, naCats = [], keepPending = [], forceDone = [] }) {
   for (const cat of CHECKLIST) for (const it of cat.items) {
     let st = 'pending';
     if (naCats.includes(cat.id)) st = 'na';
     else if (forceDone.includes(it.id) || hash(site.id + it.id) < donePct) st = 'done';
-    if (critPending.includes(it.id)) st = 'pending';
+    if (keepPending.includes(it.id)) st = 'pending';
     if (st !== 'pending') state = reduce(state, { type: 'item/set', payload: { siteId: site.id, itemId: it.id, state: st, at: ago(2 * D + hash(it.id) * H) } });
   }
   return state;
@@ -29,7 +31,7 @@ export function demoState() {
   add('client/add', { client: c1, at: c1.createdAt });
   const s1 = makeSite({ id: 's_vapewizard', clientId: c1.id, name: 'Vape Wizard DXB', domain: 'vapewizarddxb.com', platform: 'WordPress', connector: 'WooCommerce · Rank Math', createdAt: ago(40 * D), lastAuditAt: ago(2 * H) });
   add('site/add', { site: s1, at: s1.createdAt });
-  s = seedItems(s, s1, { donePct: 68, naCats: ['brandpage', 'catpage'], critPending: ['f4', 'cp1'], forceDone: ['f7', 't1', 't8', 'n1', 'n4', 'c7', 's7', 'm5', 'uc1', 'x1', 'a2', 'a7', 's9', 'a8'] });
+  s = seedItems(s, s1, { donePct: 68, naCats: ['brandpage', 'catpage'], keepPending: ['f4', 'cp1', 't9', 'a5', 'l5', 'a8'], forceDone: ['f7', 't1', 't8', 'n1', 'n4', 'c7', 's7', 'm5', 'uc1', 'x1', 'a2', 'a7', 's9'] });
   add('flag/add', { flag: makeFlag({ id: 'f_nic', siteId: s1.id, severity: 'high', tag: 'compliance', text: '73 products state a nicotine strength above the UAE 20mg/ml cap with no compliance disclosure — needs a read on whether the cap applies to sealed disposables before any listing changes.', createdAt: ago(5 * H) }), at: ago(5 * H) });
   add('flag/add', { flag: makeFlag({ id: 'f_brand', siteId: s1.id, severity: 'medium', tag: 'data-integrity', text: '"YOUTOTECH" is a fully-built brand page assigned to 0 real products — a stale duplicate of "Yuoto" (4 products). Needs a merge/redirect decision.', createdAt: ago(4 * H) }), at: ago(4 * H) });
   add('flag/add', { flag: makeFlag({ id: 'f_schema', siteId: s1.id, severity: 'medium', tag: 'schema-integrity', text: '34 products carry a manually-authored schema entry independent of page content; at least one is confirmed stale. Reconcile or remove?', createdAt: ago(1 * D) }), at: ago(1 * D) });
@@ -53,7 +55,7 @@ export function demoState() {
   add('client/add', { client: c2, at: c2.createdAt });
   const s2 = makeSite({ id: 's_loomcraft', clientId: c2.id, name: 'Loomcraft Studio', domain: 'loomcraft.studio', platform: 'Shopify', connector: '', createdAt: ago(21 * D), lastAuditAt: ago(1 * D) });
   add('site/add', { site: s2, at: s2.createdAt });
-  s = seedItems(s, s2, { donePct: 52, naCats: ['comp', 'brandpage', 'catpage', 'topicalmap', 'xstore'], critPending: ['f4', 'l1'] });
+  s = seedItems(s, s2, { donePct: 52, naCats: ['comp', 'brandpage', 'catpage', 'topicalmap', 'xstore'], keepPending: ['f4', 'l1', 'i1'] });
   add('flag/add', { flag: makeFlag({ id: 'f_shopify', siteId: s2.id, severity: 'medium', tag: 'platform-gap', text: 'No Shopify connector authorised — 14 on-page recommendations are queued as written suggestions rather than live fixes.', createdAt: ago(1 * D) }), at: ago(1 * D) });
   add('fix/add', { req: makeFixReq({ id: 'r_loom_i1', siteId: s2.id, itemId: 'i1', priority: 'p1', requestedAt: ago(1 * D) }), at: ago(1 * D) });
   add('fix/status', { id: 'r_loom_i1', status: 'waiting', at: ago(20 * H) });

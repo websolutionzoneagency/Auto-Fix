@@ -46,6 +46,82 @@ export const CHECKS = {
     },
   },
 
+  /* ---------- f2 ----------
+   * "Live AND submitted in Search Console". Submission is only visible inside Google's own UI, so a live
+   * sitemap cannot pass this item — it stays undecided with the evidence, and a missing sitemap fails it. */
+  'sitemap-submitted': {
+    label: 'XML sitemap live (Search Console submission checked by you)',
+    async run(args) {
+      const r = await CHECKS.sitemap.run(args);
+      if (r.verdict !== 'pass') return r;
+      return unknown(`${r.summary} — submission in Search Console can't be seen from the site; confirm it there`, { evidenceUrl: r.evidenceUrl });
+    },
+  },
+
+  /* ---------- im5 ---------- */
+  'image-sitemap': {
+    label: 'Product images listed in the sitemaps',
+    async run({ connector }) {
+      const index = await findSitemap(connector);
+      if (!index) return fail('No XML sitemap found, so images are not listed in one');
+      const children = /<sitemapindex/i.test(index.text) ? sitemapLocs(index.text) : [];
+      const ordered = [...children.filter(u => /product/i.test(u)), ...children.filter(u => !/product/i.test(u))].slice(0, 4);
+      const docs = children.length ? [] : [index];
+      for (const url of ordered) {
+        const res = await connector.fetchPublic(url).catch(() => null);
+        if (res && res.status === 200) docs.push({ url, text: res.text });
+      }
+      if (!docs.length) return unknown('Sitemap index found, but none of its sitemaps could be fetched');
+      const withImages = docs.filter(d => /<image:(image|loc)\b/i.test(d.text));
+      return withImages.length
+        ? pass(`Images listed in ${withImages.length} of ${docs.length} sampled sitemap${docs.length === 1 ? '' : 's'}`, { evidenceUrl: withImages[0].url || connector.baseUrl + index.path })
+        : fail(`None of ${docs.length} sampled sitemap${docs.length === 1 ? '' : 's'} list images (no <image:image> entries)`, docs.map(d => ({ url: d.url || connector.baseUrl + index.path, detail: 'no image entries' })), { evidenceUrl: connector.baseUrl + index.path });
+    },
+  },
+
+  /* ---------- s3 ---------- */
+  'schema-organization': {
+    label: 'Organization schema on the homepage',
+    async run({ connector }) {
+      const res = await connector.fetchPublic('/').catch(() => null);
+      if (!res || res.status !== 200) return unknown('Homepage did not return HTTP 200');
+      const found = jsonLdTypes(res.text);
+      const org = found.find(t => ORG_TYPES.includes(t));
+      return org
+        ? pass(`${org} schema on the homepage`, { evidenceUrl: connector.baseUrl + '/' })
+        : fail('No Organization schema on the homepage', [{ type: 'Organization', url: connector.baseUrl + '/', detail: 'Organization not found in JSON-LD' }], { evidenceUrl: connector.baseUrl + '/', note: `Found: ${found.join(', ') || 'none'}` });
+    },
+  },
+
+  /* ---------- s6 ---------- */
+  'schema-breadcrumb': {
+    label: 'BreadcrumbList schema on deep pages',
+    async run({ connector }) {
+      const urls = await samplePageUrls(connector, 6);
+      if (!urls.length) return unknown('No published posts or pages to sample');
+      const { checked, missing } = await schemaOnPages(connector, urls, ['BreadcrumbList']);
+      if (!checked) return unknown('None of the sampled pages could be fetched');
+      return missing.length
+        ? fail(`BreadcrumbList missing on ${missing.length} of ${checked} sampled deep pages`, missing.map(m => ({ url: m.url, detail: 'no BreadcrumbList in JSON-LD' })), { evidenceUrl: missing[0].url })
+        : pass(`BreadcrumbList on all ${checked} sampled deep pages`);
+    },
+  },
+
+  /* ---------- n9 ---------- */
+  'schema-product': {
+    label: 'Product, Review and BreadcrumbList schema on product pages',
+    async run({ connector }) {
+      const urls = await productUrls(connector, 5);
+      if (urls === null) return unknown('Product pages are not listed by the REST API (/wp/v2/product), so none could be sampled');
+      if (!urls.length) return unknown('No published products to sample');
+      const { checked, missing } = await schemaOnPages(connector, urls, ['Product', ['Review', 'AggregateRating'], 'BreadcrumbList']);
+      if (!checked) return unknown('None of the sampled product pages could be fetched');
+      return missing.length
+        ? fail(`Schema incomplete on ${missing.length} of ${checked} sampled product pages`, missing.map(m => ({ url: m.url, detail: `missing ${m.types.join(', ')}` })), { evidenceUrl: missing[0].url })
+        : pass(`Product, Review and BreadcrumbList on all ${checked} sampled product pages`);
+    },
+  },
+
   /* ---------- f3 ---------- */
   'legacy-links': {
     label: 'No legacy permalink prefixes in content',
@@ -472,3 +548,50 @@ function textOf(anchorTag, block) {
 
 export function getCheck(id) { return CHECKS[id] || null; }
 export function checkIds() { return Object.keys(CHECKS); }
+
+
+/* ---------- helpers for the per-item schema and sitemap checks ---------- */
+const ORG_TYPES = ['Organization', 'Corporation', 'OnlineStore', 'OnlineBusiness', 'Store', 'LocalBusiness'];
+
+async function findSitemap(connector) {
+  for (const path of ['/sitemap_index.xml', '/wp-sitemap.xml', '/sitemap.xml']) {
+    const res = await connector.fetchPublic(path).catch(() => null);
+    if (res && res.status === 200 && /<(sitemapindex|urlset)/i.test(res.text)) return { path, text: res.text };
+  }
+  return null;
+}
+
+/** Published posts and pages, never the homepage — "deep pages". */
+async function samplePageUrls(connector, n) {
+  const rows = [
+    ...await connector.posts({ limit: n }).catch(() => []),
+    ...await connector.pages({ limit: n }).catch(() => []),
+  ];
+  const home = connector.baseUrl.replace(/\/+$/, '');
+  return [...new Set(rows.map(r => r.link).filter(Boolean))]
+    .filter(u => u.replace(/\/+$/, '') !== home && u !== '/')
+    .slice(0, n);
+}
+
+/** Product permalinks via the public WooCommerce post type route; null when the route is not exposed. */
+async function productUrls(connector, n) {
+  try {
+    const rows = await connector.collect('/wp-json/wp/v2/product', { limit: n, query: { status: 'publish', _fields: 'id,link' } });
+    return rows.map(r => r.link).filter(Boolean);
+  } catch { return null; }
+}
+
+/** Fetch each URL; `types` entries are a type name or a list of alternatives. */
+async function schemaOnPages(connector, urls, types) {
+  let checked = 0;
+  const missing = [];
+  for (const url of urls) {
+    const res = await connector.fetchPublic(url).catch(() => null);
+    if (!res || res.status !== 200) continue;
+    checked++;
+    const found = jsonLdTypes(res.text);
+    const lacking = types.filter(t => Array.isArray(t) ? !t.some(x => found.includes(x)) : !found.includes(t)).map(t => Array.isArray(t) ? t.join(' or ') : t);
+    if (lacking.length) missing.push({ url: res.url || url, types: lacking });
+  }
+  return { checked, missing };
+}

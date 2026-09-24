@@ -515,6 +515,11 @@
   .search-none { padding: 18px; font-size: 12.5px; color: var(--muted); text-align: center; }
   .site-meta .meta-item.stale b { color: var(--coral); }
   @media (max-width: 860px) { .nav-scroll { max-height: none; } main { padding: 18px 16px 48px; } }
+  a.nav-item { text-decoration: none; color: inherit; box-sizing: border-box; }
+  /* Until the first render (sign-in + data load) show a loading line instead of the dashboard's empty
+     "–" placeholders, so a direct link to a page never flashes the wrong one. */
+  body.booting main > * { visibility: hidden; }
+  body.booting main::before { content: "Loading…"; display: block; padding: 40px; color: var(--muted); font-size: 13px; }
   .nav-item .trunc { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; text-align: left; }
   /* ================= automation ================= */
   .tier { font-family: var(--font-mono); font-size: 9.5px; letter-spacing: .04em; text-transform: uppercase; border-radius: 20px; padding: 1px 6px; flex: none; border: 1px solid var(--line); color: var(--muted); }
@@ -573,7 +578,7 @@
   .sidebar-foot .btn-mini { border-color: rgba(255,255,255,.2); background: rgba(255,255,255,.06); color: rgba(240,237,228,.8); }
 </style>
 </head>
-<body>
+<body class="booting">
 
 <div class="shell">
   <aside class="sidebar">
@@ -592,18 +597,18 @@
 
     <nav class="primary" aria-label="Primary">
       <div class="nav-label">Overview</div>
-      <button class="nav-item active" data-action="nav" data-view="dashboard"><span class="ic" aria-hidden="true">◧</span> Dashboard</button>
-      <button class="nav-item" data-action="nav" data-view="clients"><span class="ic" aria-hidden="true">◔</span> Clients <span class="count" id="count-clients">0</span></button>
+      <a class="nav-item active" href="#/dashboard" data-action="nav" data-view="dashboard"><span class="ic" aria-hidden="true">◧</span> Dashboard</a>
+      <a class="nav-item" href="#/clients" data-action="nav" data-view="clients"><span class="ic" aria-hidden="true">◔</span> Clients <span class="count" id="count-clients">0</span></a>
 
       <div class="nav-label">Work Queue</div>
-      <button class="nav-item" data-action="nav" data-view="flags"><span class="ic" aria-hidden="true">▲</span> Flags Inbox <span class="count" id="count-flags">0</span></button>
+      <a class="nav-item" href="#/flags" data-action="nav" data-view="flags"><span class="ic" aria-hidden="true">▲</span> Flags Inbox <span class="count" id="count-flags">0</span></a>
 
       <div class="nav-label">Sites</div>
       <div class="nav-scroll" id="nav-sites"></div>
 
       <div class="nav-label">Configure</div>
-      <button class="nav-item" data-action="nav" data-view="templates"><span class="ic" aria-hidden="true">☰</span> Checklist Template</button>
-      <button class="nav-item" data-action="nav" data-view="ai" id="nav-ai" hidden><span class="ic" aria-hidden="true">✦</span> AI Settings <span class="count" id="count-ai" hidden>!</span></button>
+      <a class="nav-item" href="#/templates" data-action="nav" data-view="templates"><span class="ic" aria-hidden="true">☰</span> Checklist Template</a>
+      <a class="nav-item" href="#/ai" data-action="nav" data-view="ai" id="nav-ai" hidden><span class="ic" aria-hidden="true">✦</span> AI Settings <span class="count" id="count-ai" hidden>!</span></a>
     </nav>
 
     <div class="sidebar-foot">

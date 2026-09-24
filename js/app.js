@@ -166,7 +166,7 @@ function renderSidebar(s) {
   $('#nav-sites').innerHTML = sites.length ? sites.map(site => {
     const n = M.flagsOfSite(s, site.id).filter(f => !f.resolved).length;
     const active = ui.view === 'site' && ui.siteId === site.id;
-    return `<button class="nav-item site-link${active ? ' active' : ''}" data-action="open-site" data-site="${esc(site.id)}" title="${esc(site.domain || site.name)}"><span class="ic" aria-hidden="true">▤</span><span class="trunc">${esc(site.name)}</span>${n ? `<span class="count">${n}</span>` : ''}</button>`;
+    return `<a class="nav-item site-link${active ? ' active' : ''}" href="#/site/${encodeURIComponent(site.id)}/checklist" data-action="open-site" data-site="${esc(site.id)}" title="${esc(site.domain || site.name)}"><span class="ic" aria-hidden="true">▤</span><span class="trunc">${esc(site.name)}</span>${n ? `<span class="count">${n}</span>` : ''}</a>`;
   }).join('') : '<div class="nav-label" style="margin-top:2px">no sites yet</div>';
 }
 
@@ -259,7 +259,7 @@ function renderSite(s) {
   const health = M.healthFor(site, flags);
 
   const link = $('#site-client-link'); link.textContent = client ? client.name : '—';
-  $('#site-breadcrumb-name').textContent = site.name;
+  $('#site-breadcrumb-name').textContent = client && client.name === site.name ? (site.domain || site.name) : site.name;
   $('#site-name').textContent = site.name;
   $('#site-domain').textContent = site.domain || '—';
   $('#site-connector').textContent = site.connector || `${site.platform} · none yet`;
@@ -298,7 +298,7 @@ function renderChecklist(site, reqs) {
   const keep = (it) => {
     const st = M.stateOf(site.items, it.id);
     if (ui.checklistFilter === 'pending') return st === 'pending';
-    if (ui.checklistFilter === 'crit') return it.crit && st === 'pending';
+    if (ui.checklistFilter === 'crit') return it.crit;
     if (ui.checklistFilter === 'done') return st === 'done';
     return true;
   };
@@ -327,6 +327,7 @@ function renderChecklist(site, reqs) {
 function itemRow(site, it, openReq) {
   const st = M.stateOf(site.items, it.id);
   const ev = (site.evidence && site.evidence[it.id]) || null;
+  const finding = API ? findingForItem(it.id) : null;
   let sub = '';
   if (st === 'done') {
     sub += `<span class="ev-date">checked ${M.fmtDate(ev && ev.checkedAt)}</span>`;
@@ -334,12 +335,14 @@ function itemRow(site, it, openReq) {
       sub += `<input type="url" data-evidence-input data-item="${it.id}" value="${esc(ev && ev.url || '')}" placeholder="https://… evidence URL (Enter to save, Esc to cancel)" aria-label="Evidence URL">`;
     } else if (ev && ev.url) {
       sub += `<a href="${esc(ev.url)}" target="_blank" rel="noopener">evidence ↗</a><button class="ev-btn" data-action="evidence-edit" data-item="${it.id}">edit</button>`;
+    } else if (finding?.evidenceUrl && finding.verdict === 'pass') {
+      // Ticked by (or agreeing with) a scan: keep showing the evidence the scan found.
+      sub += `<a href="${esc(finding.evidenceUrl)}" target="_blank" rel="noopener" title="found by the ${finding.ai ? 'AI review' : 'scan'}">evidence ↗</a><button class="ev-btn" data-action="evidence-edit" data-item="${it.id}">edit</button>`;
     } else {
       sub += `<button class="ev-btn" data-action="evidence-edit" data-item="${it.id}">+ evidence link</button>`;
     }
   }
   const tier = tierOf(it.id);
-  const finding = API ? findingForItem(it.id) : null;
   if (finding) {
     sub += `<span class="verdict ${esc(finding.verdict)}${finding.ai ? ' ai' : ''}" title="${finding.ai ? 'AI review' : 'scanner'}">${finding.ai ? 'AI: ' : ''}${finding.verdict === 'unknown' ? 'not decided' : finding.verdict}</span><span class="scan-summary" title="${esc(finding.note || '')}">${esc(finding.summary || '')}</span>`;
     if (finding.verdict === 'fail' && finding.fixId) sub += `<button type="button" class="fix-now" data-action="fix-plan" data-finding="${esc(finding.id)}">${finding.ai ? 'Review AI edits →' : 'Fix →'}</button>`;
@@ -354,16 +357,17 @@ function itemRow(site, it, openReq) {
     const label = busy ? `reviewing… ${elapsedLabel(startedAt)}${progressLabel(info?.progress)}` : (finding?.ai ? 'AI review again' : 'AI review');
     sub += `<button type="button" class="ai-btn" data-action="ai-review" data-item="${it.id}" ${busy ? 'disabled' : ''} title="Have the AI inspect the live site for this item and propose edits">${esc(label)}</button>`;
   }
-  if (st === 'pending' && !finding) {
+  if (st === 'pending') {
     if (openReq) {
       const m = M.reqStatusMeta(openReq.status);
       sub += `<span class="pill ${m.cls}">${esc(m.label)}</span><span class="prio ${openReq.priority}">${openReq.priority.toUpperCase()}</span><button class="ev-btn" data-action="tab" data-sub="fixreq">view in queue</button>`;
     } else {
       sub += `<button class="fix-btn" data-action="request-fix" data-item="${it.id}">Request fix</button>`;
     }
+    sub += `<button class="ev-btn" data-action="item-na" data-item="${it.id}" title="Exclude this item from the checklist for this site">not applicable</button>`;
   }
   return `<div class="item state-${st}${it.crit ? ' crit' : ''}${openReq ? ' has-fix' : ''}" data-item="${it.id}">
-    <button class="state-btn" data-action="item-cycle" data-item="${it.id}" data-state="${st}" aria-label="${esc(it.id)}: ${st}. Click to mark ${M.nextItemState(st)}" title="${st} → ${M.nextItemState(st)}"></button>
+    <button class="state-btn" data-action="item-cycle" data-item="${it.id}" data-state="${st}" aria-label="${esc(it.id)}: ${st}. Click to mark ${M.toggleItemState(st)}" title="${st === 'na' ? 'not applicable — click to make it applicable again' : `click to mark ${M.toggleItemState(st)}`}"></button>
     <div class="item-body">
       <div class="item-row1">
         <span class="item-code">${esc(it.id)}</span>
@@ -557,6 +561,9 @@ document.addEventListener('change', e => {
 /* ---------- click delegation ---------- */
 document.addEventListener('click', e => {
   const el = e.target.closest('[data-action]'); if (!el) return;
+  // Real links (sidebar): let the browser open a new tab/window for modified or middle clicks.
+  if (el.tagName === 'A' && (e.ctrlKey || e.metaKey || e.shiftKey || e.button !== 0)) return;
+  if (el.tagName === 'A') e.preventDefault();
   const s = store.state; const d = el.dataset;
   switch (d.action) {
     case 'nav': go(d.view); break;
@@ -597,9 +604,15 @@ document.addEventListener('click', e => {
     case 'flags-filter': ui.flagFilter = d.filter; render(); break;
     case 'item-cycle': {
       const site = s.sites[ui.siteId]; if (!site) break;
-      const next = M.nextItemState(M.stateOf(site.items, d.item));
+      const next = M.toggleItemState(M.stateOf(site.items, d.item));
       ui.openCats.add((M.itemCat(d.item) || {}).id);
       store.dispatch('item/set', { siteId: site.id, itemId: d.item, state: next });
+      break;
+    }
+    case 'item-na': {
+      const site = s.sites[ui.siteId]; if (!site) break;
+      store.dispatch('item/set', { siteId: site.id, itemId: d.item, state: 'na' });
+      toast(`${d.item} marked not applicable — it no longer counts toward completion. Tick its box to bring it back.`);
       break;
     }
     case 'evidence-edit': {
@@ -664,7 +677,12 @@ function findingForItem(itemId) {
   const check = ITEM_CHECKS[itemId];
   const scan = check ? all.find(f => f.checkId === check) : null;
   const ai = all.find(f => f.checkId === 'ai:' + itemId) || null;
-  if (scan && ai) return new Date(ai.createdAt) > new Date(scan.createdAt) ? ai : scan;
+  if (scan && ai) {
+    // An undecided result never hides a decided one: "AI: not decided" must not mask a scan pass/fail.
+    const decided = [scan, ai].filter(f => f.verdict !== 'unknown');
+    const pool = decided.length ? decided : [scan, ai];
+    return pool.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))[0];
+  }
   return ai || scan || null;
 }
 const siteConnected = (siteId) => !!ui.connection[siteId]?.connected;
@@ -1010,10 +1028,12 @@ async function boot() {
   auth.onChange(s => { if (API && auth.mode === 'supabase' && !s) location.reload(); });
   await store.start();
   routeFromHash(); render();
+  document.body.classList.remove('booting');
   if (API) loadAiSettings();
 }
 boot().catch(err => {
   console.error(err);
+  document.body.classList.remove('booting');
   document.body.insertAdjacentHTML('afterbegin', `<div role="alert" style="padding:16px 20px;background:#f3ddd6;color:#c0503a;font:13px sans-serif">RankOps couldn't load its data: ${esc(err.message)}. ${adapter.name === 'api' ? 'Check the Vercel environment variables (DATABASE_URL, ENCRYPTION_KEY) and redeploy after changing them, check the Supabase schema and your agency membership, or switch js/config.js back to local.' : ''}</div>`);
 });
 window.rankops = { store, ui, go, adapter, auth };   // exposed for debugging and the browser test

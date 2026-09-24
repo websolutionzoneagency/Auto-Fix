@@ -56,8 +56,9 @@ await page.keyboard.press('Enter');
 s = await st();
 ok('evidence URL saved on Enter', s.sites.s_vapewizard.evidence.f4.url==='https://example.com/proof');
 ok('evidence link rendered', await page.isVisible('.item[data-item="f4"] a[href="https://example.com/proof"]'));
-await page.click('.item[data-item="f4"] .state-btn'); s = await st(); ok('done → na', s.sites.s_vapewizard.items.f4==='na');
-await page.click('.item[data-item="f4"] .state-btn'); s = await st(); ok('na → pending (deleted from map)', !('f4' in s.sites.s_vapewizard.items));
+await page.click('.item[data-item="f4"] .state-btn'); s = await st(); ok('checkbox toggles done → pending (never to n/a)', !('f4' in s.sites.s_vapewizard.items));
+await page.click('.item[data-item="f4"] [data-action="item-na"]'); s = await st(); ok('n/a only via its own button', s.sites.s_vapewizard.items.f4==='na');
+await page.click('.item[data-item="f4"] .state-btn'); s = await st(); ok('ticking an n/a item makes it applicable again', !('f4' in s.sites.s_vapewizard.items));
 await page.click('.item[data-item="f4"] .fix-btn');
 ok('fix modal opens', await page.$eval('#fix-modal', m => m.classList.contains('open')));
 await page.selectOption('#fix-priority', 'p0'); await page.fill('#fix-note', 'test note'); await page.keyboard.press('Control+Enter');
@@ -68,8 +69,8 @@ ok('item row shows queued pill', await page.isVisible('.item[data-item="f4"] .pi
 await page.click('[data-action="checklist-filter"][data-filter="crit"]');
 const critShown = await page.$$eval('#checklist-cats .item', els => els.length);
 { const expCrit = await page.evaluate(() => { const s = window.rankops.store.state.sites.s_vapewizard; let n=0; document.querySelectorAll('#templates-body'); return n; });
-  const expC = await page.evaluate(async () => { const m = await import('./js/checklist.js'); const it = window.rankops.store.state.sites.s_vapewizard.items; return m.CHECKLIST.flatMap(c=>c.items).filter(i=>i.crit && !(it[i.id]==='done'||it[i.id]==='na')).length; });
-  ok('critical filter shows only pending critical items', critShown===expC, `${critShown} vs ${expC}`); }
+  const expC = await page.evaluate(async () => { const m = await import('./js/checklist.js'); const it = window.rankops.store.state.sites.s_vapewizard.items; return m.CHECKLIST.flatMap(c=>c.items).filter(i=>i.crit).length; });
+  ok('critical filter shows every critical item, done or not', critShown===expC, `${critShown} vs ${expC}`); }
 await page.click('[data-action="checklist-filter"][data-filter="all"]');
 await page.click('.tab[data-sub="fixreq"]');
 const kb = await page.evaluate(() => ['pending','progress','done'].map(c => [ +document.getElementById('kcount-'+c).textContent, document.querySelectorAll('#kcol-'+c+' .kcard').length ]));
