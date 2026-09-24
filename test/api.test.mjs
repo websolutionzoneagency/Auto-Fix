@@ -88,6 +88,10 @@ test('console state round-trips through the same reducer', { skip }, async () =>
   assert.equal(r.body.seq, 2);
   r = await call('GET', '/state');
   assert.equal(r.body.state.sites.s_vapewizard.items.f1, 'na');
+  // A full replace from a client that never loaded the data (no baseSeq) is refused once data exists.
+  const blind = await call('PUT', '/state', { body: { state: demoState(), origin: 't' } });
+  assert.equal(blind.status, 409);
+  assert.equal((await call('GET', '/state')).body.state.sites.s_vapewizard.items.f1, 'na', 'nothing was overwritten');
   r = await call('GET', '/actions?since=1');
   assert.equal(r.body.actions.length, 1);
 });
@@ -125,16 +129,18 @@ test('connection: validates, tests against the site, stores only ciphertext, nev
 
 let failingCanonical, failingAlt, failingLegacy;
 test('scan: runs inline, writes findings, and moves checklist items through the reducer', { skip }, async () => {
-  const f9Before = (await call('GET', '/state')).body.state.sites.s_vapewizard.items.f9;
+  const before = (await call('GET', '/state')).body.state.sites.s_vapewizard.items;
+  const f9Before = before.f9, f2Before = before.f2;
   const r = await call('POST', '/sites/s_vapewizard/scan', { body: {} });
   assert.equal(r.status, 202, JSON.stringify(r.body));
   assert.equal(r.body.job.status, 'done', 'a small site completes inside one request');
-  assert.equal(r.body.job.ran.length, 22, 'every mapped check ran');
+  assert.equal(r.body.job.ran.length, 25, 'every mapped check ran');
 
   const f = (await call('GET', '/sites/s_vapewizard/findings')).body.findings;
   const by = Object.fromEntries(f.map(x => [x.checkId, x]));
   assert.equal(by['author-identity'].verdict, 'fail');
-  assert.equal(by['sitemap'].verdict, 'pass');
+  assert.equal(by['sitemap-submitted'].verdict, 'unknown', 'a live sitemap cannot prove Search Console submission');
+  assert.equal(by['schema-organization'].verdict, 'fail');
   assert.equal(by['core-web-vitals'].verdict, 'unknown', 'no PSI key → unknown, not a false verdict');
   assert.equal(by['canonical'].tier, 'auto');
   assert.equal(by['broken-links'].tier, 'check');
@@ -142,11 +148,10 @@ test('scan: runs inline, writes findings, and moves checklist items through the 
 
   const state = (await call('GET', '/state')).body.state;
   const s = state.sites.s_vapewizard;
-  assert.equal(s.items.f2, 'done', 'sitemap pass → f2 done');
-  assert.ok(s.evidence.f2?.url, 'evidence URL attached');
+  assert.equal(s.items.f2, f2Before, 'f2 is left for a human: submission is only visible in Search Console');
   assert.notEqual(s.items.f7, 'done', 'canonical fail → f7 pending');
   assert.equal(s.items.f9, f9Before, 'unknown verdict leaves f9 exactly as a human left it');
-  assert.ok(state.log.some(e => /Scan complete — 22 checks run/.test(e.text)));
+  assert.ok(state.log.some(e => /Scan complete — 25 checks run/.test(e.text)));
   assert.ok(state.log.some(e => /f9 not checked — Needs a PageSpeed/.test(e.text)), 'unknown verdicts are explained in the log');
 });
 

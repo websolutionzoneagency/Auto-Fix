@@ -9,15 +9,15 @@
 
 /** itemId → id of the read-only check that decides it. */
 export const ITEM_CHECKS = {
-  f1:  'plugin-config',        f2:  'sitemap',              f3:  'legacy-links',
+  f1:  'plugin-config',        f2:  'sitemap-submitted',    f3:  'legacy-links',
   f4:  'duplicate-categories', f5:  'thin-archives',        f6:  'revisions',
   f7:  'canonical',            f8:  'broken-links',         f9:  'core-web-vitals',
   t1:  'trust-pages',          t7:  'broken-links',         t8:  'author-identity',
   t9:  'dead-nav-links',
-  n8:  'schema-presence',      n9:  'schema-presence',
+  n9:  'schema-product',                                     // n8 (FAQ) is manual: an absent FAQPage is only wrong if the page has an FAQ
   r4:  'outbound-links',
-  s3:  'schema-presence',      s6:  'schema-presence',
-  im1: 'image-filenames',      im2: 'image-alt',            im5: 'sitemap',
+  s3:  'schema-organization',  s6:  'schema-breadcrumb',
+  im1: 'image-filenames',      im2: 'image-alt',            im5: 'image-sitemap',
   l1:  'orphan-pages',
   sc1: 'open-registration',    sc3: 'debug-mode',
   ga1: 'analytics-tags',
@@ -56,7 +56,7 @@ export const FIX_BLOCKED_REASON = {
   cp2: 'A missing category page needs catalogue decisions.',
   cp5: 'Facet rules depend on which filters you want indexed.',
   f1:  'Plugin configuration changes can break a live site; reported, not changed.',
-  f2:  'Sitemap submission happens in Search Console under your Google account.',
+  f2:  'Submission happens in Search Console under your Google account — the scan can only confirm the sitemap is live, so it leaves this item for you.',
   im5: 'Image sitemap generation is a plugin setting.',
   bp4: 'Fixing click depth means changing navigation — a design decision.',
 };

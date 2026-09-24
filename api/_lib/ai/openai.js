@@ -2,11 +2,12 @@
 // Neutral messages use Anthropic-style blocks ({ text | tool_use | tool_result }); this converts both ways.
 const ENDPOINT = 'https://api.openai.com/v1/chat/completions';
 
-export function createOpenAiClient({ apiKey, model, fetchImpl = globalThis.fetch, timeoutMs = 20_000 }) {
+export function createOpenAiClient({ apiKey, model, fetchImpl = globalThis.fetch, timeoutMs = 45_000 }) {
   if (!apiKey) throw new Error('OpenAI API key is not set');
   return {
     provider: 'openai', model,
-    async complete({ system, messages, tools = [], maxTokens = 8000 }) {
+    async complete({ system, messages, tools = [], maxTokens = 8000, timeoutMs: callTimeoutMs }) {
+      const limitMs = callTimeoutMs || timeoutMs;
       const body = {
         model,
         max_completion_tokens: maxTokens,
@@ -16,12 +17,12 @@ export function createOpenAiClient({ apiKey, model, fetchImpl = globalThis.fetch
       // One turn must not eat the whole request budget — a hung upstream call would otherwise block
       // until Vercel kills the function with no response at all.
       const ctl = new AbortController();
-      const timer = setTimeout(() => ctl.abort(), timeoutMs);
+      const timer = setTimeout(() => ctl.abort(), limitMs);
       let res;
       try {
         res = await fetchImpl(ENDPOINT, { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${apiKey}` }, body: JSON.stringify(body), signal: ctl.signal });
       } catch (e) {
-        if (e.name === 'AbortError') { const err = new Error(`OpenAI: timed out after ${Math.round(timeoutMs / 1000)}s`); err.status = 504; throw err; }
+        if (e.name === 'AbortError') { const err = new Error(`OpenAI: timed out after ${Math.round(limitMs / 1000)}s`); err.status = 504; err.timeout = true; throw err; }
         throw e;
       } finally {
         clearTimeout(timer);

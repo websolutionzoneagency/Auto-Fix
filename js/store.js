@@ -249,14 +249,20 @@ export function migrate(raw) {
 }
 
 /* ---------- store ---------- */
-export function createStore({ adapter, seed }) {
+/**
+ * `lazy: true` defers loading until `store.start()` — the app uses it so nothing is fetched before
+ * sign-in has produced a token. A load that FAILS (network, 401, 500) is rethrown, never papered over
+ * with the seed: seeding persists a full `state/replace`, which against the API backend would
+ * overwrite the agency's real data with demo data. Only a load that succeeds and finds nothing seeds.
+ */
+export function createStore({ adapter, seed, lazy = false }) {
   let state = emptyState();
   const subs = new Set();
   let flushed = Promise.resolve();
+  let ready = null;
 
-  const ready = (async () => {
-    let loaded = null;
-    try { loaded = migrate(await adapter.load()); } catch (e) { console.warn('[rankops] load failed, starting fresh', e); }
+  const load = async () => {
+    const loaded = migrate(await adapter.load());       // throws on failure — the caller shows why
     if (loaded) { state = loaded; return; }
     state = seed ? seed() : emptyState();
     // Pull anything the old mock UI saved (theme + clients typed into it), then persist the new shape.
@@ -272,13 +278,21 @@ export function createStore({ adapter, seed }) {
       }
     }
     await adapter.persist(state, { type: 'state/replace', payload: { state } });
-  })();
+  };
+  function start() {
+    if (!ready) {
+      ready = load();
+      ready.then(() => { if (typeof adapter.watch === 'function') adapter.watch(a => store.applyRemote(a)); }, () => {});
+    }
+    return ready;
+  }
 
   function notify() { for (const fn of subs) { try { fn(state); } catch (e) { console.error(e); } } }
 
   const store = {
     get state() { return state; },
-    ready,
+    get ready() { return start(); },
+    start,
     adapter,
     subscribe(fn) { subs.add(fn); return () => subs.delete(fn); },
     dispatch(type, payload) {
@@ -293,6 +307,6 @@ export function createStore({ adapter, seed }) {
     /** Apply an action that already happened elsewhere (another user, via the API adapter). Not persisted. */
     applyRemote(action) { state = reduce(state, action); notify(); },
   };
-  ready.then(() => { if (typeof adapter.watch === 'function') adapter.watch(a => store.applyRemote(a)); });
+  if (!lazy) start();
   return store;
 }

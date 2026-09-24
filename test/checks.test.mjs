@@ -198,3 +198,50 @@ test('click-depth and faceted-urls', async (t) => {
   const facet = await h.run('faceted-urls');
   assert.equal(facet.verdict, 'unknown');   // the mock 404s the faceted URL
 });
+
+test('per-item schema checks: Organization on the homepage, breadcrumbs on deep pages, product schema on products', async (t) => {
+  const h = await harness(); t.after(() => h.wp.close());
+  const org = await h.run('schema-organization');
+  assert.equal(org.verdict, 'fail');
+  assert.deepEqual(org.findings.map(f => f.type), ['Organization'], 'the finding still feeds the Organization fixer');
+  const crumbs = await h.run('schema-breadcrumb');
+  assert.equal(crumbs.verdict, 'fail');
+  assert.ok(crumbs.findings.every(f => !/\/$/.test(new URL(f.url).pathname) || new URL(f.url).pathname !== '/'), 'the homepage is not a deep page');
+  // No /wp/v2/product route on this mock → undecided, never a guess.
+  assert.equal((await h.run('schema-product')).verdict, 'unknown');
+
+  const ld = (o) => `<script type="application/ld+json">${JSON.stringify(o)}</script>`;
+  const h2 = await harness(fx => {
+    fx.pagesHtml['/'].body = fx.pagesHtml['/'].body.replace('</head>', ld({ '@type': 'OnlineStore', name: 'VW' }) + '</head>');
+    for (const [path, page] of Object.entries(fx.pagesHtml)) {
+      if (path !== '/' && page.status === 200 && !path.endsWith('.xml')) page.body = page.body.replace('</head>', ld({ '@type': 'BreadcrumbList', itemListElement: [] }) + '</head>');
+    }
+  });
+  t.after(() => h2.wp.close());
+  assert.equal((await h2.run('schema-organization')).verdict, 'pass', 'an Organization subtype counts');
+  const c2 = await h2.run('schema-breadcrumb');
+  assert.equal(c2.verdict, 'pass', c2.summary);
+});
+
+test('f2 is never ticked by a live sitemap; im5 needs image entries', async (t) => {
+  const h = await harness(); t.after(() => h.wp.close());
+  const f2 = await h.run('sitemap-submitted');
+  assert.equal(f2.verdict, 'unknown');
+  assert.match(f2.summary, /Search Console/);
+  assert.ok(f2.evidenceUrl);
+  // The mock index points its children at the real domain, which can't be fetched here → undecided, not a guess.
+  assert.equal((await h.run('image-sitemap')).verdict, 'unknown');
+
+  const urlset = (inner) => ({ status: 200, contentType: 'application/xml', body: `<?xml version="1.0"?><urlset xmlns:image="http://www.google.com/schemas/sitemap-image/1.1"><url><loc>https://x/p/</loc>${inner}</url></urlset>` });
+  const h2 = await harness(fx => { fx.pagesHtml['/wp-sitemap.xml'] = urlset('<image:image><image:loc>https://x/a.jpg</image:loc></image:image>'); });
+  t.after(() => h2.wp.close());
+  const im5 = await h2.run('image-sitemap');
+  assert.equal(im5.verdict, 'pass', im5.summary);
+  const h4 = await harness(fx => { fx.pagesHtml['/wp-sitemap.xml'] = urlset(''); });
+  t.after(() => h4.wp.close());
+  assert.equal((await h4.run('image-sitemap')).verdict, 'fail', 'a sitemap without image entries fails im5');
+
+  const h3 = await harness(fx => { delete fx.pagesHtml['/wp-sitemap.xml']; });
+  t.after(() => h3.wp.close());
+  assert.equal((await h3.run('sitemap-submitted')).verdict, 'fail', 'no sitemap at all is a real failure');
+});

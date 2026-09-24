@@ -87,13 +87,63 @@ test('no submit_review → unknown, and a refusal → unknown', async () => {
   assert.match(r2.summary, /declined/);
 });
 
-test('the loop stops at the time budget', async () => {
+test('a review that runs out of request time pauses, and resumes to a verdict from its checkpoint', async () => {
   let t = 0;
-  const looping = scripted([[{ tool: 'get_settings' }]]);
-  const r = await reviewItem({ ai: looping, connector, conn: conn(), site, itemId: 'f2', budgetMs: 100, now: () => (t += 60) });
+  const clock = () => t;
+  const ai = scripted([
+    [{ tool: 'get_settings' }],
+    [{ tool: 'list_content', input: { type: 'pages' } }],
+    [{ tool: 'submit_review', input: { verdict: 'pass', summary: 'Settings look right.', rationale: 'Checked settings and pages.' } }],
+  ]);
+  const slowAi = { ...ai, async complete(args) { t += 10_000; return ai.complete(args); } };
+  // First request: 25 s budget → two 10 s turns, then less than MIN_TURN_MS left → pause.
+  const first = await reviewItem({ ai: slowAi, connector, conn: conn(), site, itemId: 'f1', budgetMs: 25_000, now: clock });
+  assert.equal(first.pending, true);
+  assert.equal(first.state.turns, 2);
+  assert.equal(first.state.transcript.length, 2);
+  // The checkpoint survives a JSON round trip (it is encrypted and sent through the browser).
+  const state = JSON.parse(JSON.stringify(first.state));
+  const second = await reviewItem({ ai: slowAi, connector, conn: conn(), site, itemId: 'f1', budgetMs: 25_000, resume: state, now: clock });
+  assert.equal(second.pending, undefined);
+  assert.equal(second.verdict, 'pass');
+  assert.equal(second.turns, 3);
+  // The checkpoint carried the whole round-one conversation: opening prompt + 2 × (assistant turn, tool results).
+  assert.equal(first.state.messages.length, 5);
+  assert.deepEqual(first.state.messages.map(m => m.role), ['user', 'assistant', 'user', 'assistant', 'user']);
+  assert.equal(ai.calls.length, 3);                                   // one model call per turn, none repeated
+});
+
+test('a turn that times out is re-issued in the next request, and abandoned after repeated timeouts', async () => {
+  let attempts = 0;
+  const timingOut = { async complete({ timeoutMs }) { attempts++; assert.ok(timeoutMs > 0 && timeoutMs <= 45_000); const e = new Error('slow'); e.timeout = true; throw e; } };
+  let state = null;
+  for (let round = 1; round <= 2; round++) {
+    const r = await reviewItem({ ai: timingOut, connector, conn: conn(), site, itemId: 'f1', budgetMs: 30_000, resume: state });
+    assert.equal(r.pending, true, `round ${round} pauses`);
+    state = r.state;
+  }
+  const r3 = await reviewItem({ ai: timingOut, connector, conn: conn(), site, itemId: 'f1', budgetMs: 30_000, resume: state });
+  assert.equal(r3.verdict, 'unknown');
+  assert.match(r3.summary, /took too long/);
+  assert.equal(attempts, 3);
+});
+
+test('provider content is replayed verbatim, so thinking blocks survive into the next turn', async () => {
+  const thinking = { type: 'thinking', thinking: '', signature: 'sig-abc' };
+  const turns = [
+    { raw: [thinking, { type: 'tool_use', id: 'a1', name: 'get_settings', input: {} }] },
+    { raw: [{ type: 'tool_use', id: 'a2', name: 'submit_review', input: { verdict: 'unknown', summary: 's', rationale: 'r' } }] },
+  ];
+  const seen = [];
+  let i = 0;
+  const ai = { async complete({ messages }) {
+    seen.push(JSON.parse(JSON.stringify(messages)));
+    const raw = turns[i++].raw;
+    return { stopReason: 'tool_use', raw, content: raw.filter(b => b.type !== 'thinking'), usage: {} };
+  } };
+  const r = await reviewItem({ ai, connector, conn: conn(), site, itemId: 'f1' });
   assert.equal(r.verdict, 'unknown');
-  assert.match(r.summary, /ran out of time/);
-  assert.ok(looping.calls.length <= 2);
+  assert.deepEqual(seen[1][1].content[0], thinking);
 });
 
 test('AI edits go through the fixer: plan re-reads, apply verifies, revert restores', async () => {
@@ -160,15 +210,26 @@ test('Anthropic adapter: uses fallbacks, retries without them once if the accoun
     beta: { messages: { async create(p) { seen.push(['beta', p]); throw rejectBeta; } } },
     messages: { async create(p) { seen.push(['plain', p]); return { stop_reason: 'end_turn', model: 'claude-opus-5', content: [{ type: 'thinking', thinking: '' }, { type: 'text', text: 'OK' }], usage: { input_tokens: 1, output_tokens: 1 } }; } },
   };
-  const client = createAnthropicClient({ model: 'claude-opus-5', sdk });
+  const client = createAnthropicClient({ model: 'claude-opus-5', sdk, effort: 'medium' });
   const r1 = await client.complete({ system: 'S', messages: [{ role: 'user', content: 'ping' }] });
   assert.deepEqual(r1.content, [{ type: 'text', text: 'OK' }]);
+  assert.deepEqual(r1.raw.map(b => b.type), ['thinking', 'text']);     // everything kept for replay
+  assert.deepEqual(seen[0][1].output_config, { effort: 'medium' });
   assert.equal(seen[0][0], 'beta'); assert.equal(seen[0][1].fallbacks, 'default'); assert.deepEqual(seen[0][1].betas, ['server-side-fallback-2026-07-01']);
   assert.equal(seen[1][0], 'plain');
   await client.complete({ system: 'S', messages: [{ role: 'user', content: 'ping' }], tools: TOOLS });
   assert.equal(seen[2][0], 'plain');                                   // remembered
   assert.deepEqual(seen[2][1].tool_choice, { type: 'auto' });
   assert.equal((await pingAi(client)).ok, true);
+});
+
+test('Anthropic adapter: a per-call deadline is passed to the SDK and a timeout is flagged for the loop', async () => {
+  const Anthropic = (await import('@anthropic-ai/sdk')).default;
+  let opts;
+  const sdk = { beta: { messages: { async create(p, o) { opts = o; throw new Anthropic.APIConnectionTimeoutError(); } } }, messages: {} };
+  const client = createAnthropicClient({ model: 'claude-opus-5', sdk });
+  await assert.rejects(client.complete({ system: 'S', messages: [{ role: 'user', content: 'x' }], timeoutMs: 12_345 }), (e) => e.timeout === true && /12s/.test(e.message));
+  assert.deepEqual(opts, { timeout: 12_345 });
 });
 
 test('provider config: stored key wins over env, env is the fallback, defaults per provider', () => {

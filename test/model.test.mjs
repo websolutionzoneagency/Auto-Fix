@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { CHECKLIST, TOTAL_ITEMS, CRITICAL } from '../js/checklist.js';
-import { nextItemState, stateOf, pctFor, catStats, openCritCount, healthFor, flagCounts, sortFixReqs, columnOf, escapeHtml, relTime, clientSummary, fleetSummary } from '../js/model.js';
+import { nextItemState, toggleItemState, stateOf, pctFor, catStats, openCritCount, healthFor, flagCounts, sortFixReqs, columnOf, escapeHtml, relTime, clientSummary, fleetSummary } from '../js/model.js';
 import { emptyState, reduce, makeClient, makeSite, makeFlag, makeFixReq, migrate, createStore } from '../js/store.js';
 import { demoState } from '../js/seed.js';
 
@@ -17,6 +17,10 @@ test('item state cycles pending → done → na → pending', () => {
   assert.equal(nextItemState('pending'), 'done');
   assert.equal(nextItemState('done'), 'na');
   assert.equal(nextItemState('na'), 'pending');
+  // The checkbox only toggles; n/a needs its own control, so a double click can't hide an item.
+  assert.equal(toggleItemState('pending'), 'done');
+  assert.equal(toggleItemState('done'), 'pending');
+  assert.equal(toggleItemState('na'), 'pending');
   assert.equal(stateOf({}, 'f1'), 'pending');
   assert.equal(stateOf({ f1: 'garbage' }, 'f1'), 'pending');
 });
@@ -120,6 +124,17 @@ test('migrate rejects foreign shapes, accepts its own', () => {
   assert.equal(migrate({ extraClients: [] }), null);
   const s = demoState();
   assert.equal(migrate(JSON.parse(JSON.stringify(s))).version, 2);
+});
+
+test('store: a lazy store loads nothing until start(), and a failed load is never replaced by the seed', async () => {
+  let loads = 0;
+  const written = [];
+  const failing = { async load() { loads++; throw new Error('missing bearer token'); }, async persist(_s, a) { written.push(a.type); } };
+  const store = createStore({ adapter: failing, seed: emptyState, lazy: true });
+  assert.equal(loads, 0);                                   // nothing fetched before sign-in
+  await assert.rejects(store.start(), /missing bearer token/);
+  assert.equal(loads, 1);
+  assert.deepEqual(written, []);                            // the demo seed was NOT saved over the real data
 });
 
 test('store: legacy v1 clients are imported once, persist is called', async () => {

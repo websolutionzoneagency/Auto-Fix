@@ -24,14 +24,15 @@ export function resolveAiConfig({ agencyId, row = null, env = process.env }) {
     if (apiKey) source = 'env';
   }
   const model = row?.model || env.AI_MODEL || DEFAULT_MODEL[provider];
-  return { provider, model, apiKey, source, autoApply: !!row?.autoApply, configured: !!apiKey };
+  const effort = ['low', 'medium', 'high', 'xhigh', 'max'].includes(env.AI_EFFORT) ? env.AI_EFFORT : 'medium';
+  return { provider, model, apiKey, source, effort, autoApply: !!row?.autoApply, configured: !!apiKey };
 }
 
 export function createAiClient(config, { fetchImpl, sdk } = {}) {
   if (!config.apiKey) { const e = new Error('No AI API key is configured. Add one under AI Settings.'); e.status = 409; throw e; }
   return config.provider === 'openai'
     ? createOpenAiClient({ apiKey: config.apiKey, model: config.model, fetchImpl })
-    : createAnthropicClient({ apiKey: config.apiKey, model: config.model, sdk });
+    : createAnthropicClient({ apiKey: config.apiKey, model: config.model, sdk, effort: config.effort });
 }
 
 /** One short round-trip to prove a key works. Returns { ok, model, error? }. */

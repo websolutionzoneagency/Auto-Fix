@@ -45,7 +45,7 @@ import { CHECKS } from './_lib/checks.js';
 import { planFix, applyPlan, revertOperations, FixBlocked, FIXES } from './_lib/fixes.js';
 import { buildConnector, buildConnectorFromPlain, sealCredentials, PLATFORMS } from './_lib/connectors/index.js';
 import { runScanBatch, drainQueue } from './_lib/scanner.js';
-import { maskSecret } from './_lib/crypto.js';
+import { maskSecret, encryptSecret, decryptSecret } from './_lib/crypto.js';
 import { resolveAiConfig, createAiClient, pingAi, sealAiKey, PROVIDERS, DEFAULT_MODEL } from './_lib/ai/provider.js';
 import { reviewItem } from './_lib/ai/agent.js';
 import { itemLabel } from '../js/model.js';
@@ -58,7 +58,8 @@ const inlineScanBudgetMs = () => Number(process.env.INLINE_SCAN_BUDGET_MS || 200
 // raised too on Pro/Enterprise before this can usefully go higher). Vercel kills the function with no
 // response at all if the limit is hit, so this stays comfortably under it and reserves time for the
 // finding + log writes that happen after the model loop returns.
-const aiReviewBudgetMs = () => Number(process.env.AI_REVIEW_BUDGET_MS || 40000);
+const aiReviewBudgetMs = () => Number(process.env.AI_REVIEW_BUDGET_MS || 45000);
+const AI_REVIEW_MAX_ROUNDS = 8;   // requests one review may be continued across (≈ 6 min at the default budget)
 const AI_REVIEW_WRITE_RESERVE_MS = 6000;
 const AI_REVIEW_MIN_LOOP_MS = 5000;
 /** What's left of the total budget for the model loop once the setup already spent and the reserve
@@ -132,9 +133,16 @@ export default async function handler(req, res) {
       if (method === 'GET') return json(res, 200, await repo.getSnapshot(A));
       if (method === 'PUT') {
         requireWrite(auth);
-        const { state, origin } = await readBody(req);
+        const { state, origin, baseSeq } = await readBody(req);
         const clean = migrate(state);
         if (!clean) return json(res, 400, { error: 'invalid state (expected RankOps schema version 2)' });
+        // A full replace is only allowed from a client that has loaded the current data (import, reset,
+        // or first run on an empty agency). Anything else — e.g. a tab whose load failed and fell back to
+        // demo data — would silently overwrite the agency's real work.
+        if (baseSeq === null || baseSeq === undefined) {
+          const head = await repo.getSnapshot(A);
+          if (head.seq > 0 && head.state) return json(res, 409, { error: 'refusing to replace saved data this browser never loaded — reload the page' });
+        }
         const { seq } = await repo.applyAction(A, { type: 'state/replace', payload: { state: clean } }, { origin, actor: auth.userId });
         return json(res, 200, { seq });
       }
@@ -248,8 +256,17 @@ export default async function handler(req, res) {
 
       if (sub === '/ai/review' && method === 'POST') {
         requireWrite(auth);
-        const { itemId, apply = false } = await readBody(req);
+        const { itemId, apply = false, checkpoint = null } = await readBody(req);
         if (!ITEM_INDEX.has(itemId)) return json(res, 400, { error: `unknown checklist item "${itemId}"` });
+        // A review too long for one request comes back as an encrypted checkpoint; the browser sends
+        // it back to continue. Encryption binds it to this agency, site and item, and stops it being edited.
+        const ckAad = `review:${A}:${siteId}:${itemId}`;
+        let resume = null;
+        if (checkpoint) {
+          try { resume = decryptSecret(checkpoint, { aad: ckAad }); }
+          catch { return json(res, 400, { error: 'this review can no longer be continued — start it again' }); }
+          if ((resume.round || 0) >= AI_REVIEW_MAX_ROUNDS) return json(res, 400, { error: 'this review has been continued too many times — start it again' });
+        }
         const conn = await repo.getConnection(A, siteId, { withCredentials: true });
         if (!conn) return json(res, 409, { error: 'Connect the site first (Site settings → Connection).' });
         const cfg = resolveAiConfig({ agencyId: A, row: await repo.getAiSettings(A) });
@@ -263,10 +280,16 @@ export default async function handler(req, res) {
         const loopBudgetMs = aiReviewLoopBudget(aiReviewBudgetMs(), Date.now() - handlerStartedAt);
         let review;
         try {
-          review = await reviewItem({ ai, connector, conn, site: siteCtx, itemId, budgetMs: loopBudgetMs, log: (m) => console.log('[rankops ai]', m) });
+          review = await reviewItem({ ai, connector, conn, site: siteCtx, itemId, budgetMs: loopBudgetMs, resume, log: (m) => console.log('[rankops ai]', m) });
         } catch (e) {
           if (e.status && e.status < 500 && !(e instanceof AuthError)) return json(res, 502, { error: `${cfg.provider} rejected the request: ${e.message}` });
           throw e;
+        }
+        if (review.pending) {
+          const round = (resume?.round || 0) + 1;
+          const lastTool = review.state.transcript[review.state.transcript.length - 1]?.tool || null;
+          return json(res, 200, { pending: true, checkpoint: encryptSecret({ ...review.state, round }, { aad: ckAad }),
+                                  progress: { round, turns: review.state.turns, toolCalls: review.state.transcript.length, lastTool } });
         }
         const finding = await repo.insertFinding(A, siteId, {
           checkId: `ai:${itemId}`, itemIds: [itemId], verdict: review.verdict, summary: review.summary,

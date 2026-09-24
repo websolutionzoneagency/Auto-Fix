@@ -45,7 +45,7 @@ The deterministic checks cover 28 items. For everything else — and for the jud
 - Nothing is written until you approve the before/after diff (**Review AI edits →**), unless **Apply AI edits automatically** is on in AI Settings. Applied edits go through the same fixer as every other fix: verified by reading back, snapshotted, revertable from the Automation tab, blocked by the kill switch.
 - The prompt forbids inventing regulatory facts, prices, stock or specifications; the reviewer is told to leave such items undecided and say what a person must supply.
 
-Set up: run `db/migrations/2026-09-22-ai-settings.sql` in the Supabase SQL editor (already included in `db/supabase.sql` for new projects), deploy, then open **AI Settings** and save a key. Each review is one tool-using model conversation, typically 20–60 s and a few thousand tokens.
+Set up: run `db/migrations/2026-09-22-ai-settings.sql` in the Supabase SQL editor (already included in `db/supabase.sql` for new projects), deploy, then open **AI Settings** and save a key. Each review is one tool-using model conversation, typically 30 s to 2 min. A review longer than one serverless request (60 s on Vercel Hobby) pauses and continues automatically: the server returns an encrypted checkpoint and the console sends it straight back, showing the step it is on. `AI_EFFORT` (default `medium`) trades reasoning depth for speed.
 
 ### What a machine may touch
 

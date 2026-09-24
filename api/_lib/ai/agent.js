@@ -10,7 +10,10 @@ import { itemLabel, itemCat } from '../../../js/model.js';
 import { HINTS } from '../../../js/checklist.js';
 import { tierOf, FIX_BLOCKED_REASON } from '../../../js/automation.js';
 
-const MAX_TURNS = 12;
+const MAX_TURNS = 12;                 // total, across every request a review is continued in
+const MIN_TURN_MS = 12_000;           // don't start a turn with less time than this left in the request
+const MAX_TURN_MS = 45_000;           // one turn never waits longer than this
+const MAX_TIMEOUTS = 3;               // a turn that keeps timing out is abandoned, not retried forever
 const MAX_OPS = 15;
 const TOOL_RESULT_CHARS = 14000;
 
@@ -68,40 +71,67 @@ export function systemPrompt({ site, item, conn }) {
  * Run the review. Returns { verdict, summary, rationale, evidenceUrl, ops, turns, usage, transcript }.
  * `ops` are validated and carry the live `before` value; ops that would not change anything are dropped.
  */
-export async function reviewItem({ ai, connector, conn, site, itemId, budgetMs = 50_000, now = Date.now, log = () => {} }) {
+/**
+ * Run the review, or one slice of it. A full review usually needs several model turns, which do not
+ * fit in one serverless request (Vercel Hobby: 60 s). So the loop works against a deadline: when the
+ * time left is too short for another turn — or a turn times out — it returns
+ *   { pending: true, state }
+ * and the caller hands `state` back on the next request to continue exactly where it stopped.
+ * A finished review returns { verdict, summary, rationale, evidenceUrl, ops, rejected, turns, usage, transcript };
+ * `ops` are validated and carry the live `before` value; ops that would not change anything are dropped.
+ */
+export async function reviewItem({ ai, connector, conn, site, itemId, budgetMs = 50_000, resume = null, now = Date.now, log = () => {} }) {
   const item = { id: itemId, label: itemLabel(itemId), hint: HINTS[itemId] || '', category: itemCat(itemId)?.title || '' };
   const seoPlugin = conn.seoPlugin || 'Rank Math';
   const system = systemPrompt({ site, item, conn });
-  const messages = [{ role: 'user', content: `Review checklist item ${item.id} now. Start by inspecting the site with the tools, then call submit_review.` }];
-  const started = now();
-  const usage = { input: 0, output: 0 };
-  const transcript = [];
-  let review = null, lastText = '';
+  const messages = resume?.messages?.length ? resume.messages
+    : [{ role: 'user', content: `Review checklist item ${item.id} now. Start by inspecting the site with the tools (several in one turn where you can), then call submit_review.` }];
+  const deadline = now() + budgetMs;
+  const usage = { input: resume?.usage?.input || 0, output: resume?.usage?.output || 0 };
+  const transcript = resume?.transcript || [];
+  let turns = resume?.turns || 0;
+  let timeouts = resume?.timeouts || 0;
+  let review = null, lastText = resume?.lastText || '';
+  const pause = () => ({ pending: true, state: { messages, usage, transcript, turns, timeouts, lastText } });
 
-  for (let turn = 0; turn < MAX_TURNS && !review; turn++) {
-    if (now() - started > budgetMs) { lastText = 'ran out of time before the review finished'; break; }
-    const res = await ai.complete({ system, messages, tools: TOOLS });
+  while (turns < MAX_TURNS && !review) {
+    const left = deadline - now();
+    if (left < MIN_TURN_MS) return pause();                    // not enough time for a turn: continue next request
+    let res;
+    try {
+      res = await ai.complete({ system, messages, tools: TOOLS, timeoutMs: Math.min(left - 1000, MAX_TURN_MS) });
+    } catch (e) {
+      if (!e.timeout) throw e;
+      // The turn did not finish in the time this request had left. Re-issue it in a fresh request —
+      // unless it has already timed out with a full budget behind it, which a retry would not change.
+      if (++timeouts >= MAX_TIMEOUTS) { lastText = 'the model took too long on every attempt (try a faster model or lower effort in AI Settings)'; break; }
+      log(`${itemId} turn ${turns + 1} timed out after ${Math.round((now() - (deadline - left)) / 1000)}s — continuing in the next request`);
+      return pause();
+    }
+    turns++;
     usage.input += res.usage?.input || 0; usage.output += res.usage?.output || 0;
-    messages.push({ role: 'assistant', content: res.content.length ? res.content : [{ type: 'text', text: '(no content)' }] });
+    // Replay what the provider returned verbatim (Anthropic thinking blocks must go back unchanged).
+    messages.push({ role: 'assistant', content: res.raw?.length ? res.raw : (res.content.length ? res.content : [{ type: 'text', text: '(no content)' }]) });
     lastText = res.content.filter(b => b.type === 'text').map(b => b.text).join('\n').trim() || lastText;
     if (res.stopReason === 'refusal') { lastText = 'the model declined to review this item'; break; }
     const calls = res.content.filter(b => b.type === 'tool_use');
     if (!calls.length) break;                                   // end_turn without submit_review
-    const results = [];
-    for (const call of calls) {
-      if (call.name === 'submit_review') { review = call.input; results.push({ type: 'tool_result', tool_use_id: call.id, content: 'recorded' }); continue; }
+    const results = await Promise.all(calls.map(async (call) => {
+      if (call.name === 'submit_review') { review = call.input; return { type: 'tool_result', tool_use_id: call.id, content: 'recorded' }; }
       let content;
       try { content = clip(JSON.stringify(await runTool(call.name, call.input || {}, { connector, seoPlugin }))); }
       catch (e) { content = `error: ${e.message}`; }
       transcript.push({ tool: call.name, input: call.input, chars: content.length });
       log(`${itemId} ${call.name}(${JSON.stringify(call.input || {})}) → ${content.length} chars`);
-      results.push({ type: 'tool_result', tool_use_id: call.id, content });
-    }
+      return { type: 'tool_result', tool_use_id: call.id, content };
+    }));
     messages.push({ role: 'user', content: results });
   }
+  if (!review && !lastText && turns >= MAX_TURNS) lastText = `no verdict after ${MAX_TURNS} turns`;
 
   if (!review) {
-    return { verdict: 'unknown', summary: `AI review did not reach a verdict — ${lastText || 'no response'}`.slice(0, 500), rationale: lastText, evidenceUrl: null, ops: [], rejected: [], turns: transcript.length, usage, transcript };
+    // The reason is already in the summary; repeating it as the rationale printed it twice in the UI.
+    return { verdict: 'unknown', summary: `AI review did not reach a verdict — ${lastText || 'no response'}`.slice(0, 500), rationale: '', evidenceUrl: null, ops: [], rejected: [], turns, usage, transcript };
   }
   const verdict = ['pass', 'fail', 'unknown'].includes(review.verdict) ? review.verdict : 'unknown';
   const ops = [], rejected = [];
@@ -116,7 +146,7 @@ export async function reviewItem({ ai, connector, conn, site, itemId, budgetMs =
   }
   return {
     verdict, summary: String(review.summary || '').slice(0, 500), rationale: String(review.rationale || '').slice(0, 4000),
-    evidenceUrl: safeUrl(review.evidence_url, conn.baseUrl), ops, rejected, turns: transcript.length, usage, transcript,
+    evidenceUrl: safeUrl(review.evidence_url, conn.baseUrl), ops, rejected, turns, usage, transcript,
   };
 }
 

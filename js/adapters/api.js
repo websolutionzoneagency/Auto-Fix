@@ -15,7 +15,8 @@ export function createApiAdapter({ apiBase = '/api', apiToken = '', pollMs = 150
   let seq = 0;
   let onRemote = null;
   let timer = null;
-  let inflight = null;                                              // the current sync, so callers coalesce onto it
+  let inflight = null;
+  let loaded = false;                                               // set once GET /state has succeeded                                              // the current sync, so callers coalesce onto it
   const tokenOf = getToken || (() => apiToken);
 
   /** `timeoutMs` is opt-in: without it a call waits as long as the browser lets it, same as before.
@@ -77,11 +78,14 @@ export function createApiAdapter({ apiBase = '/api', apiToken = '', pollMs = 150
     async load() {
       const data = await call('GET', '/state');
       seq = data.seq || 0;
+      loaded = true;
       return data.state || null;
     },
     async persist(state, action) {
       if (action.type === 'state/replace') {
-        const data = await call('PUT', '/state', { state, origin });
+        // `baseSeq` proves this tab loaded the server's state first; the API refuses a full replace
+        // without it once data exists, so a tab that never loaded can't overwrite anyone's work.
+        const data = await call('PUT', '/state', { state, origin, baseSeq: loaded ? seq : null });
         seq = data.seq || seq;
         return;
       }
