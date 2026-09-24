@@ -1,4 +1,5 @@
 // RankOps API — one Vercel serverless function serving everything under /api.
+// vercel.json rewrites /api/* here; the route is read from the request (see requestPath).
 //
 //   GET    /health                                  liveness (public)
 //   GET    /me                                      who am I, which agency, what role
@@ -29,6 +30,11 @@
 //   POST   /sites/:id/fixes/revert { opIds }        restore snapshots
 //   GET    /sites/:id/fixes                         history
 //
+//   AI review (any checklist item; the model inspects the site read-only and proposes edits)
+//   GET    /ai/settings                             provider, model, whether a key is set (never the key)
+//   PUT    /ai/settings   { provider, model, apiKey?, autoApply }   save (key encrypted) + test the key
+//   POST   /sites/:id/ai/review  { itemId, apply? } run one review → finding (check "ai:<itemId>"); apply=true also applies its edits
+//
 //   GET    /cron/scan                               Vercel Cron: drain the queue (CRON_SECRET)
 import * as repo from './_lib/repo.js';
 import { json, readBody } from './_lib/http.js';
@@ -40,9 +46,15 @@ import { planFix, applyPlan, revertOperations, FixBlocked, FIXES } from './_lib/
 import { buildConnector, buildConnectorFromPlain, sealCredentials, PLATFORMS } from './_lib/connectors/index.js';
 import { runScanBatch, drainQueue } from './_lib/scanner.js';
 import { maskSecret } from './_lib/crypto.js';
+import { resolveAiConfig, createAiClient, pingAi, sealAiKey, PROVIDERS, DEFAULT_MODEL } from './_lib/ai/provider.js';
+import { reviewItem } from './_lib/ai/agent.js';
+import { itemLabel } from '../js/model.js';
+import { ITEM_INDEX } from '../js/checklist.js';
 import { timingSafeEqual } from 'node:crypto';
 
 const inlineScanBudgetMs = () => Number(process.env.INLINE_SCAN_BUDGET_MS || 20000);
+const aiReviewBudgetMs = () => Number(process.env.AI_REVIEW_BUDGET_MS || 50000);
+const AI_ORIGIN = 'ai';
 
 /** A setup problem the operator can act on is named in the response; anything else stays "internal error"
  *  (the full error is in the function log either way). Never echoes the connection string. */
@@ -69,7 +81,7 @@ export function requestPath(req) {
   if (raw !== undefined && raw !== null && String(raw) !== '') return '/' + [].concat(raw).join('/').replace(/^\/+/, '');
   let pathname = '/';
   try { pathname = new URL(req.url || '/', 'http://x').pathname; } catch { /* keep '/' */ }
-  if (pathname.includes('[')) return '/';                         // the rewritten function path, not the request
+  if (pathname.includes('[') || /^\/api\/index$/.test(pathname)) return '/';   // the rewrite target, not the request
   return pathname.replace(/^\/api(?=\/|$)/, '').replace(/\/+$/, '') || '/';
 }
 
@@ -108,6 +120,31 @@ export default async function handler(req, res) {
         if (!action || typeof action.type !== 'string') return json(res, 400, { error: 'expected { action: { type, payload } }' });
         const { seq } = await repo.applyAction(A, action, { origin, actor: auth.userId });
         return json(res, 200, { seq });
+      }
+    }
+
+    /* ---------- AI settings (agency-wide) ---------- */
+    if (path === '/ai/settings') {
+      if (method === 'GET') return json(res, 200, await aiSettingsView(A));
+      if (method === 'PUT') {
+        requireManage(auth);
+        const body = await readBody(req);
+        const provider = String(body.provider || 'anthropic');
+        if (!PROVIDERS.includes(provider)) return json(res, 400, { error: `provider must be one of ${PROVIDERS.join(', ')}` });
+        const model = String(body.model || '').trim() || DEFAULT_MODEL[provider];
+        const key = typeof body.apiKey === 'string' ? body.apiKey.trim() : undefined;
+        const existing = await repo.getAiSettings(A);
+        // '' clears the stored key (falls back to the server env); undefined keeps it; a value replaces it.
+        const apiKey = key === undefined ? (existing?.provider === provider ? undefined : null) : (key ? sealAiKey(key, A) : null);
+        const row = await repo.upsertAiSettings(A, { provider, model, apiKey, autoApply: !!body.autoApply });
+        const view = await aiSettingsView(A, row);
+        let test = null;
+        if (view.configured) {
+          const cfg = resolveAiConfig({ agencyId: A, row });
+          test = await pingAi(createAiClient(cfg));
+        }
+        await repo.applyAction(A, { type: 'log/add', payload: { siteId: null, kind: 'system', text: `AI settings updated — ${provider} / ${model}${test ? (test.ok ? ' (key verified)' : ` (key test failed: ${test.error})`) : ' (no key)'}` } }, { origin: 'api', actor: auth.userId }).catch(() => {});
+        return json(res, 200, { ...view, test });
       }
     }
 
@@ -181,6 +218,38 @@ export default async function handler(req, res) {
         return json(res, 200, { findings: findings.map(decorateFinding) });
       }
 
+      if (sub === '/ai/review' && method === 'POST') {
+        requireWrite(auth);
+        const { itemId, apply = false } = await readBody(req);
+        if (!ITEM_INDEX.has(itemId)) return json(res, 400, { error: `unknown checklist item "${itemId}"` });
+        const conn = await repo.getConnection(A, siteId, { withCredentials: true });
+        if (!conn) return json(res, 409, { error: 'Connect the site first (Site settings → Connection).' });
+        const cfg = resolveAiConfig({ agencyId: A, row: await repo.getAiSettings(A) });
+        if (!cfg.configured) return json(res, 409, { error: 'No AI API key is configured. Add one under AI Settings.' });
+        const ai = createAiClient(cfg);
+        const connector = buildConnector(conn, { agencyId: A });
+        const siteCtx = { id: siteId, name: site.name, domain: site.domain, settingsSummary: settingsSummary(conn.settings) };
+        let review;
+        try {
+          review = await reviewItem({ ai, connector, conn, site: siteCtx, itemId, budgetMs: aiReviewBudgetMs(), log: (m) => console.log('[rankops ai]', m) });
+        } catch (e) {
+          if (e.status && e.status < 500 && !(e instanceof AuthError)) return json(res, 502, { error: `${cfg.provider} rejected the request: ${e.message}` });
+          throw e;
+        }
+        const finding = await repo.insertFinding(A, siteId, {
+          checkId: `ai:${itemId}`, itemIds: [itemId], verdict: review.verdict, summary: review.summary,
+          note: [review.rationale, review.rejected.length ? `Not proposed: ${review.rejected.map(r => r.reason).filter((v, i, a) => a.indexOf(v) === i).join('; ')}` : ''].filter(Boolean).join('\n'),
+          evidenceUrl: review.evidenceUrl, details: review.ops.map(op => ({ ...op, itemId })),
+        });
+        await foldAiVerdict(A, siteId, itemId, review, auth.userId);
+        let applied = null;
+        const wantApply = !!apply || cfg.autoApply;
+        if (wantApply && review.verdict === 'fail' && review.ops.length && !conn.paused) {
+          applied = await applyFinding(A, siteId, finding.id, { auth, opIndexes: null });
+        }
+        return json(res, 200, { finding: decorateFinding(finding), review: { turns: review.turns, usage: review.usage, model: cfg.model, provider: cfg.provider, rejected: review.rejected }, applied });
+      }
+
       if (sub === '/fixes' && method === 'GET') return json(res, 200, { operations: await repo.listFixOps(A, siteId) });
       if (sub === '/fixes/plan' && method === 'POST') {
         requireWrite(auth);
@@ -192,27 +261,9 @@ export default async function handler(req, res) {
         requireWrite(auth);
         const { findingId, opIndexes } = await readBody(req);
         if ((await repo.getConnection(A, siteId))?.paused) return json(res, 423, { error: 'Writes are paused for this site (kill switch is on).' });
-        const { plan, conn, connector, finding } = await planFromFinding(A, siteId, findingId);
-        const chosen = Array.isArray(opIndexes) && opIndexes.length ? plan.ops.filter((_, i) => opIndexes.includes(i)) : plan.ops;
-        if (!chosen.length) return json(res, 400, { error: 'nothing to apply', plan });
-        let result;
-        try {
-          result = await applyPlan({ connector, site: { ...conn, paused: conn.paused }, plan: { ...plan, ops: chosen }, ctx: conn.settings, seoPlugin: conn.seoPlugin || 'Rank Math' });
-        } catch (e) {
-          if (e instanceof FixBlocked) return json(res, 423, { error: e.message });
-          throw e;
-        }
-        const stored = await repo.insertFixOps(A, siteId, [
-          ...result.applied.map(op => ({ ...opRow(op, finding), status: 'applied', before: op.snapshot?.value ?? op.before, approvedBy: auth.userId })),
-          ...result.failed.map(op => ({ ...opRow(op, finding), status: 'failed', error: op.error, approvedBy: auth.userId })),
-        ]);
-        const label = FIXES[plan.fixId]?.label || plan.fixId;
-        await repo.applyAction(A, { type: 'log/add', payload: { siteId, kind: 'fix', text: `${label} — ${result.applied.length} applied${result.failed.length ? `, ${result.failed.length} failed` : ''}` } }, { origin: 'api', actor: auth.userId });
-        // A fully successful fix verifies the item; a re-scan will confirm from the outside.
-        if (result.applied.length && !result.failed.length && plan.itemId) {
-          await repo.applyAction(A, { type: 'item/set', payload: { siteId, itemId: plan.itemId, state: 'done' } }, { origin: 'api', actor: auth.userId });
-        }
-        return json(res, 200, { applied: stored.filter(o => o.status === 'applied'), failed: stored.filter(o => o.status === 'failed'), plan });
+        const out = await applyFinding(A, siteId, findingId, { auth, opIndexes });
+        if (out.error) return json(res, out.status, out);
+        return json(res, 200, out);
       }
       if (sub === '/fixes/revert' && method === 'POST') {
         requireWrite(auth);
@@ -278,9 +329,11 @@ async function saveConnection(A, siteId, body) {
 async function planFromFinding(A, siteId, findingId) {
   const finding = await repo.getFinding(A, findingId);
   if (!finding || finding.siteId !== siteId) { const e = new Error('finding not found'); e.status = 404; throw e; }
+  const isAi = finding.checkId.startsWith('ai:');
   const itemId = finding.itemIds.find(i => ITEM_FIXES[i]);
-  const fixId = itemId ? ITEM_FIXES[itemId] : null;
+  const fixId = isAi ? 'ai-edit' : (itemId ? ITEM_FIXES[itemId] : null);
   if (!fixId) { const e = new Error(`no automatic fix for ${finding.checkId} (tier: ${finding.itemIds.map(tierOf).join(',')})`); e.status = 422; throw e; }
+  if (isAi && !finding.details.length) { const e = new Error('the AI review proposed no edits for this item'); e.status = 422; throw e; }
   const conn = await repo.getConnection(A, siteId, { withCredentials: true });
   if (!conn) { const e = new Error('site is not connected'); e.status = 409; throw e; }
   const connector = buildConnector(conn, { agencyId: A });
@@ -289,11 +342,71 @@ async function planFromFinding(A, siteId, findingId) {
   return { plan: { ...plan, findingId, paused: conn.paused }, conn, connector, finding };
 }
 
+/** Plan + apply every (or the chosen) op of a finding; the shared path for the review modal and auto-apply. */
+async function applyFinding(A, siteId, findingId, { auth, opIndexes }) {
+  const { plan, conn, connector, finding } = await planFromFinding(A, siteId, findingId);
+  const chosen = Array.isArray(opIndexes) && opIndexes.length ? plan.ops.filter((_, i) => opIndexes.includes(i)) : plan.ops;
+  if (!chosen.length) return { error: 'nothing to apply', status: 400, plan };
+  let result;
+  try {
+    result = await applyPlan({ connector, site: { ...conn, paused: conn.paused }, plan: { ...plan, ops: chosen }, ctx: conn.settings, seoPlugin: conn.seoPlugin || 'Rank Math' });
+  } catch (e) {
+    if (e instanceof FixBlocked) return { error: e.message, status: 423 };
+    throw e;
+  }
+  const stored = await repo.insertFixOps(A, siteId, [
+    ...result.applied.map(op => ({ ...opRow(op, finding), status: 'applied', before: op.snapshot?.value ?? op.before, approvedBy: auth.userId })),
+    ...result.failed.map(op => ({ ...opRow(op, finding), status: 'failed', error: op.error, approvedBy: auth.userId })),
+  ]);
+  const label = plan.fixId === 'ai-edit' ? `AI edits for ${plan.itemId}` : (FIXES[plan.fixId]?.label || plan.fixId);
+  await repo.applyAction(A, { type: 'log/add', payload: { siteId, kind: 'fix', text: `${label} — ${result.applied.length} applied${result.failed.length ? `, ${result.failed.length} failed` : ''}` } }, { origin: 'api', actor: auth.userId });
+  // A fully successful fix verifies the item; a re-scan will confirm from the outside.
+  if (result.applied.length && !result.failed.length && plan.itemId) {
+    await repo.applyAction(A, { type: 'item/set', payload: { siteId, itemId: plan.itemId, state: 'done' } }, { origin: 'api', actor: auth.userId });
+  }
+  return { applied: stored.filter(o => o.status === 'applied'), failed: stored.filter(o => o.status === 'failed'), plan };
+}
+
+/** AI verdicts move items the way the scanner's do: pass → done (+evidence), fail → pending (+log), unknown → log only. */
+async function foldAiVerdict(A, siteId, itemId, review, actor) {
+  const meta = { origin: AI_ORIGIN, actor };
+  if (review.verdict === 'pass') {
+    await repo.applyAction(A, { type: 'item/set', payload: { siteId, itemId, state: 'done' } }, meta);
+    if (review.evidenceUrl) await repo.applyAction(A, { type: 'evidence/set', payload: { siteId, itemId, url: review.evidenceUrl } }, meta);
+    await repo.applyAction(A, { type: 'log/add', payload: { siteId, kind: 'audit', text: `${itemId} passed AI review — ${review.summary}` } }, meta);
+  } else if (review.verdict === 'fail') {
+    await repo.applyAction(A, { type: 'item/set', payload: { siteId, itemId, state: 'pending' } }, meta);
+    await repo.applyAction(A, { type: 'log/add', payload: { siteId, kind: 'audit', text: `${itemId} failed AI review — ${review.summary}${review.ops.length ? ` (${review.ops.length} edit${review.ops.length === 1 ? '' : 's'} proposed)` : ''}` } }, meta);
+  } else {
+    await repo.applyAction(A, { type: 'log/add', payload: { siteId, kind: 'audit', text: `${itemId} not decided by AI review — ${review.summary}` } }, meta);
+  }
+}
+
+async function aiSettingsView(A, row) {
+  row = row || await repo.getAiSettings(A);
+  const cfg = resolveAiConfig({ agencyId: A, row });
+  return { provider: cfg.provider, model: cfg.model, configured: cfg.configured, keySource: cfg.source, keyMasked: cfg.apiKey ? maskSecret(cfg.apiKey) : null,
+           autoApply: cfg.autoApply, providers: PROVIDERS, defaultModels: DEFAULT_MODEL, updatedAt: row?.updatedAt || null };
+}
+
+function settingsSummary(settings = {}) {
+  const parts = [];
+  if (settings.organizationName) parts.push(`business name "${settings.organizationName}"`);
+  if (settings.defaultAuthorName) parts.push(`default author "${settings.defaultAuthorName}"`);
+  if (settings.allowedDomains?.length) parts.push(`allowed outbound domains ${settings.allowedDomains.join(', ')}`);
+  if (settings.notes) parts.push(String(settings.notes).slice(0, 500));
+  return parts.join('; ');
+}
+
 function opRow(op, finding) {
   return { findingId: finding.id, fixId: op.fixId, itemId: op.itemId, target: op.target, field: op.field, before: op.before, after: op.after, describe: op.describe, irreversible: !!op.irreversible };
 }
 
 function decorateFinding(f) {
+  if (f.checkId.startsWith('ai:')) {
+    const itemId = f.checkId.slice(3);
+    return { ...f, label: `AI review: ${itemLabel(itemId)}`, fixId: f.verdict === 'fail' && f.details.length ? 'ai-edit' : null, tier: 'ai', ai: true };
+  }
   const fixable = f.itemIds.some(i => ITEM_FIXES[i]);
   return { ...f, label: CHECKS[f.checkId]?.label || f.checkId, fixId: fixable ? ITEM_FIXES[f.itemIds.find(i => ITEM_FIXES[i])] : null, tier: fixable ? 'auto' : 'check' };
 }

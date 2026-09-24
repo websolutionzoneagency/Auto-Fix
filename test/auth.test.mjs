@@ -71,7 +71,7 @@ test('authenticate accepts an ES256 user with a membership', async () => {
 });
 
 test('server errors are explained when they are a setup problem', async () => {
-  const { explainServerError } = await import('../api/[...path].js');
+  const { explainServerError } = await import('../api/index.js');
   assert.match(explainServerError(new Error('DATABASE_URL is not set')), /DATABASE_URL is not set/);
   assert.match(explainServerError(Object.assign(new Error('relation "snapshots" does not exist'), { code: '42P01' })), /db\/supabase\.sql/);
   assert.match(explainServerError(Object.assign(new Error('password authentication failed'), { code: '28P01' })), /credentials/);
@@ -80,11 +80,11 @@ test('server errors are explained when they are a setup problem', async () => {
 });
 
 test('the route is found whichever way Vercel passes the catch-all segments', async () => {
-  const { requestPath } = await import('../api/[...path].js');
+  const { requestPath } = await import('../api/index.js');
   assert.equal(requestPath({ query: { path: ['state'] } }), '/state');
   assert.equal(requestPath({ query: { path: 'sites/abc/scan' } }), '/sites/abc/scan');
-  assert.equal(requestPath({ query: { '...path': 'state' }, url: '/api/[...path]?...path=state' }), '/state');
+  assert.equal(requestPath({ query: { '...path': 'state' }, url: '/api/index?...path=state' }), '/state');
   assert.equal(requestPath({ query: { since: '3' }, url: '/api/actions?since=3' }), '/actions');
-  assert.equal(requestPath({ query: {}, url: '/api/[...path]' }), '/');
+  assert.equal(requestPath({ query: {}, url: '/api/index' }), '/');
   assert.equal(requestPath({ query: {}, url: '/api' }), '/');
 });

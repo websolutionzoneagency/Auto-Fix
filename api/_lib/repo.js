@@ -85,6 +85,27 @@ function rowToConnection(r) {
            createdAt: r.created_at, updatedAt: r.updated_at, ...(r.credentials !== undefined ? { credentials: r.credentials } : {}) };
 }
 
+/* ---------- AI settings (api_key column is ciphertext) ---------- */
+export async function getAiSettings(agencyId) {
+  const { rows } = await q(`select agency_id, provider, model, api_key, auto_apply, updated_at from agency_ai_settings where agency_id = $1`, [agencyId]);
+  const r = rows[0];
+  return r ? { agencyId: r.agency_id, provider: r.provider, model: r.model, apiKey: r.api_key, autoApply: r.auto_apply, updatedAt: r.updated_at } : null;
+}
+/** `apiKey` undefined keeps the stored key; null clears it; a string (ciphertext) replaces it. */
+export async function upsertAiSettings(agencyId, { provider, model, apiKey, autoApply }) {
+  const { rows } = await q(
+    `insert into agency_ai_settings (agency_id, provider, model, api_key, auto_apply)
+     values ($1, $2, $3, $4, $5)
+     on conflict (agency_id) do update set
+       provider = excluded.provider, model = excluded.model,
+       api_key = case when $6 then agency_ai_settings.api_key else excluded.api_key end,
+       auto_apply = excluded.auto_apply, updated_at = now()
+     returning agency_id, provider, model, api_key, auto_apply, updated_at`,
+    [agencyId, provider, model || null, apiKey === undefined ? null : apiKey, !!autoApply, apiKey === undefined]);
+  const r = rows[0];
+  return { agencyId: r.agency_id, provider: r.provider, model: r.model, apiKey: r.api_key, autoApply: r.auto_apply, updatedAt: r.updated_at };
+}
+
 /* ---------- scan queue ---------- */
 export async function enqueueScan(agencyId, siteId, { checks = [], requestedBy = null } = {}) {
   const { rows } = await q(

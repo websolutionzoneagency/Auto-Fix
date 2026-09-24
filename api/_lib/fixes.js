@@ -8,6 +8,7 @@
 // without a snapshot of what it replaced. A site with `paused: true` refuses every write
 // (the per-site kill switch).
 import { seoKeys, restBase } from './connectors/wordpress.js';
+import { readField, writeField, sameValue, validateOp } from './ai/edits.js';
 
 export class FixBlocked extends Error {
   constructor(msg) { super(msg); this.name = 'FixBlocked'; }
@@ -214,6 +215,35 @@ export const FIXES = {
     },
     async revert({ connector, op }) { await connector.updateSettings({ users_can_register: op.snapshot.value }); },
   },
+
+  /* ---------- AI review (any item) ---------- */
+  // The AI reviewer's proposed edits arrive as the finding's details, one per op, already validated
+  // and carrying the live `before` value from review time. Planning re-reads the field so the diff
+  // shown to the approver is current; applying writes it and reads it back; revert restores the snapshot.
+  'ai-edit': {
+    label: 'Apply AI-proposed edits',
+    itemId: null,
+    async plan({ finding, connector, seoPlugin }) {
+      const op = validateOp(finding);
+      const cur = await readField(connector, op.target, op.field, seoPlugin);
+      if (sameValue(cur.value, op.after)) return [];
+      return [{
+        target: { ...op.target, url: cur.url || op.target.url || null },
+        field: op.field, before: cur.value, after: op.after,
+        describe: finding.describe || `${op.field} on ${op.target.type} #${op.target.id}`,
+        lowConfidence: !!finding.lowConfidence,
+        changedSinceReview: finding.before !== undefined && !sameValue(finding.before, cur.value),
+      }];
+    },
+    async apply({ connector, op, seoPlugin }) {
+      await writeField(connector, op.target, op.field, op.after, seoPlugin);
+      const now = await readField(connector, op.target, op.field, seoPlugin);
+      return { snapshot: { field: op.field, value: op.before }, verify: sameValue(now.value, op.after) };
+    },
+    async revert({ connector, op, seoPlugin }) {
+      await writeField(connector, op.target, op.field, op.snapshot.value, seoPlugin);
+    },
+  },
 };
 
 /* ---------- orchestration ---------- */
@@ -227,13 +257,13 @@ export async function planFix(fixId, { connector, site, findings, ctx = {}, seoP
   for (const finding of findings.slice(0, limit)) {
     try {
       const planned = await fix.plan({ finding, connector, site, ctx, seoPlugin });
-      for (const op of planned) ops.push({ ...op, fixId, itemId: fix.itemId });
+      for (const op of planned) ops.push({ ...op, fixId, itemId: fix.itemId || finding.itemId || null });
     } catch (e) {
       if (e instanceof FixBlocked) blocked.push({ finding, reason: e.message });
       else throw e;
     }
   }
-  return { fixId, itemId: fix.itemId, label: fix.label, ops, blocked, dryRun: true };
+  return { fixId, itemId: fix.itemId || findings[0]?.itemId || null, label: fix.label, ops, blocked, dryRun: true };
 }
 
 /** Execute an approved plan. Each op that succeeds carries the snapshot needed to undo it. */

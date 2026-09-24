@@ -1,4 +1,4 @@
-// API adapter — talks to the Vercel serverless functions in /api (see api/[...path].js).
+// API adapter — talks to the Vercel serverless functions in /api (see api/index.js).
 // Same interface as adapters/local.js, plus:
 //   call(method, path, body)  — any endpoint, used by the connection / scan / fix UI
 //   sync()                    — pull other users' (and the scanner's) actions right now

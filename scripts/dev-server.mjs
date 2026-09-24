@@ -1,9 +1,9 @@
-// Local stand-in for Vercel: serves the static app AND mounts api/[...path].js under /api.
+// Local stand-in for Vercel: serves the static app AND mounts api/index.js under /api.
 //   DATABASE_URL=... RANKOPS_API_TOKEN=... ENCRYPTION_KEY=... node scripts/dev-server.mjs
 import { createServer } from 'node:http';
 import { readFile, stat } from 'node:fs/promises';
 import { extname, join, normalize } from 'node:path';
-import handler from '../api/[...path].js';
+import handler from '../api/index.js';
 
 const PORT = Number(process.env.PORT || 8080);
 const ROOT = new URL('..', import.meta.url).pathname;

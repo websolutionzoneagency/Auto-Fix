@@ -1,6 +1,21 @@
 {
   "cleanUrls": true,
   "trailingSlash": false,
-  "functions": { "api/*.js": { "maxDuration": 60 } },
-  "crons": [{ "path": "/api/cron/scan", "schedule": "0 3 * * *" }]
+  "functions": {
+    "api/index.js": {
+      "maxDuration": 60
+    }
+  },
+  "crons": [
+    {
+      "path": "/api/cron/scan",
+      "schedule": "0 3 * * *"
+    }
+  ],
+  "rewrites": [
+    {
+      "source": "/api/:path*",
+      "destination": "/api/index"
+    }
+  ]
 }
