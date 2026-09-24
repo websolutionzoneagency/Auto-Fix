@@ -15,7 +15,7 @@ const adapter = CONFIG.backend === 'api'
   ? createApiAdapter({ ...CONFIG, getToken: () => auth.getToken() })
   : createLocalAdapter({ key: CONFIG.storageKey });
 const API = adapter.name === 'api';                 // connections, scans and fixes exist only with the backend
-const store = createStore({ adapter, seed: demoState });
+const store = createStore({ adapter, seed: demoState, lazy: true });   // started in boot(), after sign-in
 
 const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
@@ -134,6 +134,11 @@ function render() {
   ensureAiTicker();
 }
 
+/** " · step 3 · reading get_content" — what a continued review has done so far. */
+function progressLabel(p) {
+  if (!p) return '';
+  return ` · step ${p.turns + 1}${p.lastTool ? ` · ${p.lastTool.replace(/_/g, ' ')}` : ''}`;
+}
 /** How long ago an AI review started, as a short live label. */
 function elapsedLabel(startedAt) {
   if (!startedAt) return '';
@@ -342,10 +347,11 @@ function itemRow(site, it, openReq) {
     if (finding.evidenceUrl && st !== 'done') sub += `<a href="${esc(finding.evidenceUrl)}" target="_blank" rel="noopener">evidence ↗</a>`;
   }
   if (API && st !== 'na' && siteConnected(site.id)) {
-    const startedAt = ui.busy['ai:' + site.id + ':' + it.id]?.startedAt
+    const info = ui.busy['ai:' + site.id + ':' + it.id];
+    const startedAt = info?.startedAt
       ?? (ui.aiRun && ui.aiRun.siteId === site.id && ui.aiRun.current === it.id ? ui.aiRun.currentStartedAt : null);
     const busy = startedAt != null;
-    const label = busy ? `reviewing… ${elapsedLabel(startedAt)}` : (finding?.ai ? 'AI review again' : 'AI review');
+    const label = busy ? `reviewing… ${elapsedLabel(startedAt)}${progressLabel(info?.progress)}` : (finding?.ai ? 'AI review again' : 'AI review');
     sub += `<button type="button" class="ai-btn" data-action="ai-review" data-item="${it.id}" ${busy ? 'disabled' : ''} title="Have the AI inspect the live site for this item and propose edits">${esc(label)}</button>`;
   }
   if (st === 'pending' && !finding) {
@@ -732,7 +738,7 @@ function renderAutomation(s, site) {
   const aiBar = `<div class="scan-bar">
       <b>✦ AI audit</b> ${aiConfigured === false ? '— <button class="link-btn" data-action="nav" data-view="ai" style="padding:2px 8px">add an API key first</button>' : 'lets the model inspect the live site for every pending item and draft the fixes'}${ui.ai?.autoApply ? ' · <b>auto-apply is ON</b>' : ' · edits wait for your approval'}
       <span class="spacer"></span>
-      ${run ? `<span class="ai-progress" style="margin:0">${run.done}/${run.total} reviewed · ${run.pass} pass · ${run.fail} fail · ${run.unknown} undecided${run.current ? ` · now: ${esc(run.current)} (${elapsedLabel(run.currentStartedAt)})` : ''}${run.stop ? ' · stopping…' : ''}</span><button class="btn-mini danger" data-action="ai-audit-stop" ${run.stop ? 'disabled' : ''}>Stop</button>`
+      ${run ? `<span class="ai-progress" style="margin:0">${run.done}/${run.total} reviewed · ${run.pass} pass · ${run.fail} fail · ${run.unknown} undecided${run.current ? ` · now: ${esc(run.current)} (${elapsedLabel(run.currentStartedAt)}${esc(progressLabel(ui.busy['ai:' + site.id + ':' + run.current]?.progress))})` : ''}${run.stop ? ' · stopping…' : ''}</span><button class="btn-mini danger" data-action="ai-audit-stop" ${run.stop ? 'disabled' : ''}>Stop</button>`
           : `<button class="btn-mini" data-action="ai-audit" data-scope="critical" ${aiConfigured === false ? 'disabled' : ''}>Review critical items</button><button class="link-btn" data-action="ai-audit" data-scope="pending" ${aiConfigured === false ? 'disabled' : ''}>Review all pending items</button>`}
     </div>`;
   $('#automation-body').innerHTML = bar + aiBar + `
@@ -931,7 +937,13 @@ async function aiReview(siteId, itemId, { quiet = false } = {}) {
   if (ui.busy[key]) return null;
   ui.busy[key] = { startedAt: Date.now() }; render();
   try {
-    const r = await api('POST', `/sites/${siteId}/ai/review`, { itemId }, { timeoutMs: AI_REVIEW_TIMEOUT_MS });
+    // A long review is continued across several requests: each returns either the finished review
+    // or { pending, checkpoint, progress }, and the checkpoint is sent straight back to carry on.
+    let r = await api('POST', `/sites/${siteId}/ai/review`, { itemId }, { timeoutMs: AI_REVIEW_TIMEOUT_MS });
+    while (r.pending) {
+      ui.busy[key] = { ...ui.busy[key], progress: r.progress }; render();
+      r = await api('POST', `/sites/${siteId}/ai/review`, { itemId, checkpoint: r.checkpoint }, { timeoutMs: AI_REVIEW_TIMEOUT_MS });
+    }
     mergeFinding(siteId, r.finding);
     await adapter.sync();
     if (!quiet) {
@@ -956,7 +968,7 @@ async function startAiAudit(siteId, scope) {
   const site = store.state.sites[siteId];
   const items = CHECKLIST.flatMap(c => c.items).filter(it => M.stateOf(site.items, it.id) === 'pending' && (scope !== 'critical' || it.crit));
   if (!items.length) { toast('Nothing pending to review.'); return; }
-  if (!confirm(`Review ${items.length} pending item${items.length === 1 ? '' : 's'} with the AI? Each review is one model call sequence (roughly 30–60 s each).${ui.ai?.autoApply ? '\n\nAuto-apply is ON: proposed edits will be written to the site as they are found.' : '\n\nProposed edits will wait for your approval.'}`)) return;
+  if (!confirm(`Review ${items.length} pending item${items.length === 1 ? '' : 's'} with the AI? Each review takes roughly 30 s to 2 min.${ui.ai?.autoApply ? '\n\nAuto-apply is ON: proposed edits will be written to the site as they are found.' : '\n\nProposed edits will wait for your approval.'}`)) return;
   ui.aiRun = { siteId, total: items.length, done: 0, pass: 0, fail: 0, unknown: 0, current: null, stop: false };
   render();
   for (const it of items) {
@@ -996,7 +1008,7 @@ async function boot() {
     showAuth(false);
   }
   auth.onChange(s => { if (API && auth.mode === 'supabase' && !s) location.reload(); });
-  await store.ready;
+  await store.start();
   routeFromHash(); render();
   if (API) loadAiSettings();
 }

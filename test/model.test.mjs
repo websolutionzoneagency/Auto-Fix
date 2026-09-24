@@ -122,6 +122,17 @@ test('migrate rejects foreign shapes, accepts its own', () => {
   assert.equal(migrate(JSON.parse(JSON.stringify(s))).version, 2);
 });
 
+test('store: a lazy store loads nothing until start(), and a failed load is never replaced by the seed', async () => {
+  let loads = 0;
+  const written = [];
+  const failing = { async load() { loads++; throw new Error('missing bearer token'); }, async persist(_s, a) { written.push(a.type); } };
+  const store = createStore({ adapter: failing, seed: emptyState, lazy: true });
+  assert.equal(loads, 0);                                   // nothing fetched before sign-in
+  await assert.rejects(store.start(), /missing bearer token/);
+  assert.equal(loads, 1);
+  assert.deepEqual(written, []);                            // the demo seed was NOT saved over the real data
+});
+
 test('store: legacy v1 clients are imported once, persist is called', async () => {
   const written = [];
   const adapter = {
