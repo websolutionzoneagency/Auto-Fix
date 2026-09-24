@@ -53,7 +53,20 @@ import { ITEM_INDEX } from '../js/checklist.js';
 import { timingSafeEqual } from 'node:crypto';
 
 const inlineScanBudgetMs = () => Number(process.env.INLINE_SCAN_BUDGET_MS || 20000);
-const aiReviewBudgetMs = () => Number(process.env.AI_REVIEW_BUDGET_MS || 50000);
+// Total wall-clock budget for one AI review request — auth, DB reads, the model loop, and the writes
+// after it, all inside Vercel's own function limit (60s on Hobby; vercel.json's maxDuration must be
+// raised too on Pro/Enterprise before this can usefully go higher). Vercel kills the function with no
+// response at all if the limit is hit, so this stays comfortably under it and reserves time for the
+// finding + log writes that happen after the model loop returns.
+const aiReviewBudgetMs = () => Number(process.env.AI_REVIEW_BUDGET_MS || 40000);
+const AI_REVIEW_WRITE_RESERVE_MS = 6000;
+const AI_REVIEW_MIN_LOOP_MS = 5000;
+/** What's left of the total budget for the model loop once the setup already spent and the reserve
+ *  held back for the writes after it are both subtracted. Exported so the accounting is unit-tested
+ *  without needing a live database. */
+export function aiReviewLoopBudget(totalMs, elapsedMs, reserveMs = AI_REVIEW_WRITE_RESERVE_MS) {
+  return Math.max(AI_REVIEW_MIN_LOOP_MS, totalMs - elapsedMs - reserveMs);
+}
 const AI_ORIGIN = 'ai';
 
 /** A setup problem the operator can act on is named in the response; the full error is always in the
@@ -99,6 +112,7 @@ export function requestPath(req) {
 }
 
 export default async function handler(req, res) {
+  const handlerStartedAt = Date.now();
   const path = requestPath(req);
   const segs = path.split('/').filter(Boolean);
   const method = req.method;
@@ -243,9 +257,13 @@ export default async function handler(req, res) {
         const ai = createAiClient(cfg);
         const connector = buildConnector(conn, { agencyId: A });
         const siteCtx = { id: siteId, name: site.name, domain: site.domain, settingsSummary: settingsSummary(conn.settings) };
+        // Charge everything already spent this request (auth, the connection/settings reads above)
+        // against the total budget, and hold back a slice for the writes that follow the loop — so the
+        // loop itself never runs long enough to make the whole request trip Vercel's own hard limit.
+        const loopBudgetMs = aiReviewLoopBudget(aiReviewBudgetMs(), Date.now() - handlerStartedAt);
         let review;
         try {
-          review = await reviewItem({ ai, connector, conn, site: siteCtx, itemId, budgetMs: aiReviewBudgetMs(), log: (m) => console.log('[rankops ai]', m) });
+          review = await reviewItem({ ai, connector, conn, site: siteCtx, itemId, budgetMs: loopBudgetMs, log: (m) => console.log('[rankops ai]', m) });
         } catch (e) {
           if (e.status && e.status < 500 && !(e instanceof AuthError)) return json(res, 502, { error: `${cfg.provider} rejected the request: ${e.message}` });
           throw e;

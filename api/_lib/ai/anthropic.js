@@ -8,7 +8,7 @@ import Anthropic from '@anthropic-ai/sdk';
 
 export function createAnthropicClient({ apiKey, model, sdk } = {}) {
   if (!apiKey && !sdk) throw new Error('Anthropic API key is not set');
-  const client = sdk || new Anthropic({ apiKey, maxRetries: 1, timeout: 45_000 });
+  const client = sdk || new Anthropic({ apiKey, maxRetries: 1, timeout: 20_000 });   // one turn must not eat the whole request budget
   let fallbacksOk = true;
   return {
     provider: 'anthropic', model,
