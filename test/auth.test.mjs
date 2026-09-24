@@ -76,7 +76,15 @@ test('server errors are explained when they are a setup problem', async () => {
   assert.match(explainServerError(Object.assign(new Error('relation "snapshots" does not exist'), { code: '42P01' })), /db\/supabase\.sql/);
   assert.match(explainServerError(Object.assign(new Error('password authentication failed'), { code: '28P01' })), /credentials/);
   assert.match(explainServerError(Object.assign(new Error('getaddrinfo ENOTFOUND x'), { code: 'ENOTFOUND' })), /cannot reach/);
-  assert.equal(explainServerError(new Error('postgres://user:secret@host/db exploded')), 'internal error');
+  // Unrecognized errors still surface a redacted message instead of a bare "internal error" —
+  // useful for the setup causes not named above, but never a credential.
+  const other = explainServerError(new Error('postgres://user:secret@host/db exploded'));
+  assert.match(other, /^internal error: /);
+  assert.doesNotMatch(other, /secret/);
+  assert.match(other, /\*\*\*@host\/db exploded/);
+  assert.match(explainServerError(Object.assign(new Error('column "x" of relation "y" does not exist'), { code: '42703' })), /schema is out of date/);
+  assert.match(explainServerError(Object.assign(new Error('permission denied for table site_connections'), { code: '42501' })), /lacks a needed privilege/);
+  assert.equal(explainServerError(new Error('')), 'internal error');
 });
 
 test('the route is found whichever way Vercel passes the catch-all segments', async () => {

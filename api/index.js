@@ -56,21 +56,34 @@ const inlineScanBudgetMs = () => Number(process.env.INLINE_SCAN_BUDGET_MS || 200
 const aiReviewBudgetMs = () => Number(process.env.AI_REVIEW_BUDGET_MS || 50000);
 const AI_ORIGIN = 'ai';
 
-/** A setup problem the operator can act on is named in the response; anything else stays "internal error"
- *  (the full error is in the function log either way). Never echoes the connection string. */
+/** A setup problem the operator can act on is named in the response; the full error is always in the
+ *  function log too. Never echoes a connection string or its credentials, even in the fallback. */
 export function explainServerError(e) {
   const msg = String(e?.message || '');
   const code = String(e?.code || '');
   if (/DATABASE_URL is not set/.test(msg)) return 'DATABASE_URL is not set on the server (Vercel → Settings → Environment Variables; redeploy after adding it)';
   if (/ENCRYPTION_KEY/.test(msg)) return msg;
   if (code === '42P01') return `database schema is not installed (${msg.replace(/^relation /, '')}): run db/supabase.sql in the Supabase SQL editor`;
+  if (code === '42703') return `database schema is out of date (${msg}): re-run db/supabase.sql (and any files in db/migrations/) in the Supabase SQL editor`;
+  if (code === '42501') return `the database role in DATABASE_URL lacks a needed privilege (${msg}) — use the Supabase pooler connection string for the "postgres" role, not a restricted one`;
+  if (code === '23502' || code === '23514' || code === '22P02' || code === '23503') return `the database rejected the write (${msg})`;
   if (code === '28P01' || code === '28000') return 'the database rejected the credentials in DATABASE_URL (check the password; URL-encode special characters)';
   if (code === '3D000') return 'DATABASE_URL names a database that does not exist';
   if (['ENOTFOUND', 'ECONNREFUSED', 'ETIMEDOUT', 'ECONNRESET', 'EAI_AGAIN'].includes(code) || /getaddrinfo|connect ETIMEDOUT|timeout expired/i.test(msg)) {
     return 'cannot reach the database host in DATABASE_URL (use the Supabase pooler connection string)';
   }
   if (/SSL|TLS|certificate/i.test(msg)) return 'TLS handshake with the database failed (DATABASE_URL should use the Supabase pooler, no sslmode override)';
-  return 'internal error';
+  // Nothing named above matched — show a redacted version of the real message instead of hiding it,
+  // so a setup problem this list doesn't yet know about is still actionable from the banner alone.
+  return `internal error${msg ? ': ' + redact(msg).slice(0, 300) : ''}`;
+}
+
+/** Strip anything that looks like a credential (connection-string userinfo, bearer tokens, long
+ *  base64/hex-ish runs) before a message is ever sent to the browser. */
+function redact(s) {
+  return String(s)
+    .replace(/\/\/[^/\s@]+@/g, '//***@')                 // postgres://user:pass@host → postgres://***@host
+    .replace(/\b[A-Za-z0-9+/_-]{24,}={0,2}\b/g, (m) => (/^[0-9a-f]{24,}$/i.test(m) || /[+/_=-]/.test(m) ? '***' : m));
 }
 
 /** The route under /api. Vercel hands the catch-all segments to the function under a query key that has
