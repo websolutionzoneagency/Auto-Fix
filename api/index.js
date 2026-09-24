@@ -100,6 +100,7 @@ export function requestPath(req) {
 
 export default async function handler(req, res) {
   const path = requestPath(req);
+  const segs = path.split('/').filter(Boolean);
   const method = req.method;
 
   try {
