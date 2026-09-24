@@ -131,6 +131,23 @@ function render() {
   else if (ui.view === 'site') renderSite(s);
   else if (ui.view === 'templates') renderTemplates(s);
   else if (ui.view === 'ai') renderAiSettings();
+  ensureAiTicker();
+}
+
+/** How long ago an AI review started, as a short live label. */
+function elapsedLabel(startedAt) {
+  if (!startedAt) return '';
+  const s = Math.max(0, Math.round((Date.now() - startedAt) / 1000));
+  return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${s % 60}s`;
+}
+/** While any AI review is in flight (single-item or an audit run), re-render once a second so the
+ *  "reviewing… Ns" labels visibly move — the only sign of life during a call that can take up to a
+ *  minute, so it never looks like the button silently did nothing. */
+let aiTicker = null;
+function ensureAiTicker() {
+  const running = !!ui.aiRun || Object.keys(ui.busy).some(k => k.startsWith('ai:'));
+  if (running && !aiTicker) aiTicker = setInterval(render, 1000);
+  else if (!running && aiTicker) { clearInterval(aiTicker); aiTicker = null; }
 }
 
 function renderSidebar(s) {
@@ -325,8 +342,11 @@ function itemRow(site, it, openReq) {
     if (finding.evidenceUrl && st !== 'done') sub += `<a href="${esc(finding.evidenceUrl)}" target="_blank" rel="noopener">evidence ↗</a>`;
   }
   if (API && st !== 'na' && siteConnected(site.id)) {
-    const busy = ui.busy['ai:' + site.id + ':' + it.id] || (ui.aiRun && ui.aiRun.siteId === site.id && ui.aiRun.current === it.id);
-    sub += `<button type="button" class="ai-btn" data-action="ai-review" data-item="${it.id}" ${busy ? 'disabled' : ''} title="Have the AI inspect the live site for this item and propose edits">${busy ? 'reviewing…' : (finding?.ai ? 'AI review again' : 'AI review')}</button>`;
+    const startedAt = ui.busy['ai:' + site.id + ':' + it.id]?.startedAt
+      ?? (ui.aiRun && ui.aiRun.siteId === site.id && ui.aiRun.current === it.id ? ui.aiRun.currentStartedAt : null);
+    const busy = startedAt != null;
+    const label = busy ? `reviewing… ${elapsedLabel(startedAt)}` : (finding?.ai ? 'AI review again' : 'AI review');
+    sub += `<button type="button" class="ai-btn" data-action="ai-review" data-item="${it.id}" ${busy ? 'disabled' : ''} title="Have the AI inspect the live site for this item and propose edits">${esc(label)}</button>`;
   }
   if (st === 'pending' && !finding) {
     if (openReq) {
@@ -642,10 +662,14 @@ function findingForItem(itemId) {
   return ai || scan || null;
 }
 const siteConnected = (siteId) => !!ui.connection[siteId]?.connected;
-async function api(method, path, body) {
-  try { return await adapter.call(method, path, body); }
+async function api(method, path, body, opts) {
+  try { return await adapter.call(method, path, body, opts); }
   catch (e) { toast(e instanceof ApiError ? e.message : 'Request failed: ' + e.message); throw e; }
 }
+// Comfortably above the server's own AI-review budget (api/index.js AI_REVIEW_BUDGET_MS, 40s by default)
+// plus network + queueing slack, so a genuinely dropped connection is reported as a clear timeout rather
+// than the tab waiting indefinitely with no feedback.
+const AI_REVIEW_TIMEOUT_MS = 55000;
 /** Load connection + findings + fix history for a site once; re-render when they land. */
 function ensureAutomationData(siteId, force = false) {
   if (!API) return;
@@ -708,7 +732,7 @@ function renderAutomation(s, site) {
   const aiBar = `<div class="scan-bar">
       <b>✦ AI audit</b> ${aiConfigured === false ? '— <button class="link-btn" data-action="nav" data-view="ai" style="padding:2px 8px">add an API key first</button>' : 'lets the model inspect the live site for every pending item and draft the fixes'}${ui.ai?.autoApply ? ' · <b>auto-apply is ON</b>' : ' · edits wait for your approval'}
       <span class="spacer"></span>
-      ${run ? `<span class="ai-progress" style="margin:0">${run.done}/${run.total} reviewed · ${run.pass} pass · ${run.fail} fail · ${run.unknown} undecided${run.current ? ` · now: ${esc(run.current)}` : ''}${run.stop ? ' · stopping…' : ''}</span><button class="btn-mini danger" data-action="ai-audit-stop" ${run.stop ? 'disabled' : ''}>Stop</button>`
+      ${run ? `<span class="ai-progress" style="margin:0">${run.done}/${run.total} reviewed · ${run.pass} pass · ${run.fail} fail · ${run.unknown} undecided${run.current ? ` · now: ${esc(run.current)} (${elapsedLabel(run.currentStartedAt)})` : ''}${run.stop ? ' · stopping…' : ''}</span><button class="btn-mini danger" data-action="ai-audit-stop" ${run.stop ? 'disabled' : ''}>Stop</button>`
           : `<button class="btn-mini" data-action="ai-audit" data-scope="critical" ${aiConfigured === false ? 'disabled' : ''}>Review critical items</button><button class="link-btn" data-action="ai-audit" data-scope="pending" ${aiConfigured === false ? 'disabled' : ''}>Review all pending items</button>`}
     </div>`;
   $('#automation-body').innerHTML = bar + aiBar + `
@@ -905,9 +929,9 @@ async function clearAiKey() {
 async function aiReview(siteId, itemId, { quiet = false } = {}) {
   const key = 'ai:' + siteId + ':' + itemId;
   if (ui.busy[key]) return null;
-  ui.busy[key] = true; render();
+  ui.busy[key] = { startedAt: Date.now() }; render();
   try {
-    const r = await api('POST', `/sites/${siteId}/ai/review`, { itemId });
+    const r = await api('POST', `/sites/${siteId}/ai/review`, { itemId }, { timeoutMs: AI_REVIEW_TIMEOUT_MS });
     mergeFinding(siteId, r.finding);
     await adapter.sync();
     if (!quiet) {
@@ -919,7 +943,7 @@ async function aiReview(siteId, itemId, { quiet = false } = {}) {
     }
     return r;
   } catch { return null; }
-  finally { ui.busy[key] = false; refreshAutomation(siteId); render(); }
+  finally { delete ui.busy[key]; refreshAutomation(siteId); render(); }
 }
 function mergeFinding(siteId, finding) {
   const list = (ui.findings[siteId] || []).filter(f => f.checkId !== finding.checkId);
@@ -937,7 +961,7 @@ async function startAiAudit(siteId, scope) {
   render();
   for (const it of items) {
     if (ui.aiRun.stop || !store.state.sites[siteId]) break;
-    ui.aiRun.current = it.id; render();
+    ui.aiRun.current = it.id; ui.aiRun.currentStartedAt = Date.now(); render();
     const r = await aiReview(siteId, it.id, { quiet: true });
     ui.aiRun.done++;
     if (r) ui.aiRun[r.finding.verdict === 'pass' ? 'pass' : r.finding.verdict === 'fail' ? 'fail' : 'unknown']++;

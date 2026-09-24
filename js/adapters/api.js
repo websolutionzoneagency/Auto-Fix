@@ -18,11 +18,24 @@ export function createApiAdapter({ apiBase = '/api', apiToken = '', pollMs = 150
   let inflight = null;                                              // the current sync, so callers coalesce onto it
   const tokenOf = getToken || (() => apiToken);
 
-  async function call(method, path, body) {
+  /** `timeoutMs` is opt-in: without it a call waits as long as the browser lets it, same as before.
+   *  Pass it for anything server-side that can outrun the function it talks to (the AI review call) so
+   *  a dropped connection ends in a clear error instead of hanging until the tab is closed. */
+  async function call(method, path, body, { timeoutMs } = {}) {
     const headers = { 'content-type': 'application/json' };
     const token = await tokenOf();
     if (token) headers.authorization = 'Bearer ' + token;
-    const res = await fetch(apiBase + path, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) });
+    const ctl = timeoutMs ? new AbortController() : null;
+    const timer = ctl ? setTimeout(() => ctl.abort(), timeoutMs) : null;
+    let res;
+    try {
+      res = await fetch(apiBase + path, { method, headers, body: body === undefined ? undefined : JSON.stringify(body), signal: ctl?.signal });
+    } catch (e) {
+      if (e.name === 'AbortError') throw new ApiError(`timed out after ${Math.round(timeoutMs / 1000)}s waiting for the server (${method} ${path})`, { status: 0 });
+      throw new ApiError(`network error on ${method} ${path}: ${e.message}`, { status: 0 });
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
     if (res.status === 204) return null;
     let data = null;
     try { data = await res.json(); } catch { /* empty body */ }

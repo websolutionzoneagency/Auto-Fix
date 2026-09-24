@@ -2,7 +2,7 @@
 // Neutral messages use Anthropic-style blocks ({ text | tool_use | tool_result }); this converts both ways.
 const ENDPOINT = 'https://api.openai.com/v1/chat/completions';
 
-export function createOpenAiClient({ apiKey, model, fetchImpl = globalThis.fetch }) {
+export function createOpenAiClient({ apiKey, model, fetchImpl = globalThis.fetch, timeoutMs = 20_000 }) {
   if (!apiKey) throw new Error('OpenAI API key is not set');
   return {
     provider: 'openai', model,
@@ -13,7 +13,19 @@ export function createOpenAiClient({ apiKey, model, fetchImpl = globalThis.fetch
         messages: [{ role: 'system', content: system }, ...toOpenAiMessages(messages)],
         ...(tools.length ? { tools: tools.map(t => ({ type: 'function', function: { name: t.name, description: t.description, parameters: t.input_schema } })), tool_choice: 'auto' } : {}),
       };
-      const res = await fetchImpl(ENDPOINT, { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${apiKey}` }, body: JSON.stringify(body) });
+      // One turn must not eat the whole request budget — a hung upstream call would otherwise block
+      // until Vercel kills the function with no response at all.
+      const ctl = new AbortController();
+      const timer = setTimeout(() => ctl.abort(), timeoutMs);
+      let res;
+      try {
+        res = await fetchImpl(ENDPOINT, { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${apiKey}` }, body: JSON.stringify(body), signal: ctl.signal });
+      } catch (e) {
+        if (e.name === 'AbortError') { const err = new Error(`OpenAI: timed out after ${Math.round(timeoutMs / 1000)}s`); err.status = 504; throw err; }
+        throw e;
+      } finally {
+        clearTimeout(timer);
+      }
       const data = await res.json().catch(() => ({}));
       if (!res.ok) { const e = new Error(`OpenAI: ${data?.error?.message || `HTTP ${res.status}`}`); e.status = res.status; throw e; }
       const choice = data.choices?.[0] || {};

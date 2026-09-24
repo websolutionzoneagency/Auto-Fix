@@ -183,3 +183,49 @@ test('provider config: stored key wins over env, env is the fallback, defaults p
   const none = resolveAiConfig({ agencyId: 'ag', row: null, env: {} });
   assert.equal(none.configured, false);
 });
+
+test('AI review request budget: setup time and a write reserve both come out of the loop budget', async () => {
+  const { aiReviewLoopBudget } = await import('../api/index.js');
+  assert.equal(aiReviewLoopBudget(40000, 0), 34000);            // 40s total − 0 elapsed − 6s reserve
+  assert.equal(aiReviewLoopBudget(40000, 5000), 29000);         // 5s already spent on auth/DB reads
+  assert.equal(aiReviewLoopBudget(40000, 39000), 5000);         // never goes below the floor…
+  assert.equal(aiReviewLoopBudget(40000, 90000), 5000);         // …even if setup alone blew the budget
+  assert.equal(aiReviewLoopBudget(40000, 5000, 2000), 33000);   // a smaller reserve is honored
+});
+
+test('the OpenAI adapter times out a hung request instead of hanging forever', async () => {
+  const hangingFetch = (url, init) => new Promise((_, reject) => {
+    init.signal.addEventListener('abort', () => { const e = new Error('aborted'); e.name = 'AbortError'; reject(e); });
+  });
+  const client = createOpenAiClient({ apiKey: 'k', model: 'gpt-5', fetchImpl: hangingFetch, timeoutMs: 30 });
+  await assert.rejects(client.complete({ system: 'S', messages: [{ role: 'user', content: 'hi' }] }), /timed out after/);
+});
+
+test('the browser API adapter times out a hung request with a clear, callsite-specific message', async () => {
+  const { createApiAdapter, ApiError } = await import('../js/adapters/api.js');
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = (url, init) => new Promise((_, reject) => {
+    init.signal.addEventListener('abort', () => { const e = new Error('aborted'); e.name = 'AbortError'; reject(e); });
+  });
+  try {
+    const adapter = createApiAdapter({ apiBase: 'http://x', getToken: async () => 'tok' });
+    await assert.rejects(
+      adapter.call('POST', '/sites/s1/ai/review', { itemId: 'f1' }, { timeoutMs: 30 }),
+      (e) => e instanceof ApiError && /timed out after 0s/.test(e.message) && /POST \/sites\/s1\/ai\/review/.test(e.message),
+    );
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
+
+test('the browser API adapter is unaffected when no timeout is requested', async () => {
+  const { createApiAdapter } = await import('../js/adapters/api.js');
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async () => ({ ok: true, status: 200, json: async () => ({ ok: true }) });
+  try {
+    const adapter = createApiAdapter({ apiBase: 'http://x', getToken: async () => 'tok' });
+    assert.deepEqual(await adapter.call('GET', '/health'), { ok: true });
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
