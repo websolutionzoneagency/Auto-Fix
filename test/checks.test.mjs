@@ -196,7 +196,13 @@ test('click-depth and faceted-urls', async (t) => {
   assert.equal(depth.verdict, 'fail', 'populated category is not linked from the homepage');
   assert.ok(depth.findings.some(f => f.id === 40));
   const facet = await h.run('faceted-urls');
-  assert.equal(facet.verdict, 'unknown');   // the mock 404s the faceted URL
+  assert.equal(facet.verdict, 'fail', 'a filtered category page with no noindex and no clean canonical is indexable');
+  const h2 = await harness(fx => {
+    fx.pagesHtml['/product-category/disposables/'].body = fx.pagesHtml['/product-category/disposables/'].body
+      .replace('</head>', '<link rel="canonical" href="https://vapewizarddxb.com/product-category/disposables/"></head>');
+  });
+  t.after(() => h2.wp.close());
+  assert.equal((await h2.run('faceted-urls')).verdict, 'pass', 'canonicalising facets to the clean URL passes');
 });
 
 test('per-item schema checks: Organization on the homepage, breadcrumbs on deep pages, product schema on products', async (t) => {
@@ -244,4 +250,46 @@ test('f2 is never ticked by a live sitemap; im5 needs image entries', async (t) 
   const h3 = await harness(fx => { delete fx.pagesHtml['/wp-sitemap.xml']; });
   t.after(() => h3.wp.close());
   assert.equal((await h3.run('sitemap-submitted')).verdict, 'fail', 'no sitemap at all is a real failure');
+});
+
+test('SEO-field fixes need the companion plugin, and an ignored write is never reported as applied', async (t) => {
+  const { planFix, applyPlan } = await import('../api/_lib/fixes.js');
+  const h = await harness(); t.after(() => h.wp.close());
+  const thin = await h.run('thin-archives');
+  const blocked = await planFix('noindex-thin-archive', { connector: h.connector, site: { companionPlugin: false }, findings: thin.findings });
+  assert.equal(blocked.ops.length, 0);
+  assert.match(blocked.blocked[0].reason, /companion plugin/);
+  // A site that accepts the request but drops the unregistered field: the write must fail verification.
+  const dropping = await harness(); t.after(() => dropping.wp.close());
+  dropping.wp.state.categories.forEach(c => { delete c.meta; });
+  const plan = await planFix('noindex-thin-archive', { connector: dropping.connector, site: {}, findings: thin.findings });
+  const origUpdate = dropping.connector.updateTerm.bind(dropping.connector);
+  dropping.connector.updateTerm = async (id, patch, tax) => { const row = await origUpdate(id, {}, tax); delete row.meta; return row; };
+  const res = await applyPlan({ connector: dropping.connector, site: {}, plan });
+  assert.equal(res.applied.length, 0);
+  assert.match(res.failed[0].error, /did not return .*companion plugin/);
+});
+
+test('thin-archives covers product brands, and the noindex fix writes to the brand taxonomy', async (t) => {
+  const { planFix, applyPlan } = await import('../api/_lib/fixes.js');
+  const h = await harness(fx => {
+    fx.brands = [
+      { id: 70, name: 'YOUTOTECH', slug: 'youtotech', count: 0, link: '/brand/youtotech/', meta: { rank_math_robots: [] } },
+      { id: 71, name: 'Yuoto', slug: 'yuoto', count: 40, link: '/brand/yuoto/', meta: { rank_math_robots: [] } },
+    ];
+    fx.pagesHtml['/brand/youtotech/'] = { status: 200, body: '<html><head></head><body><h1>YOUTOTECH</h1></body></html>' };
+    fx.pagesHtml['/brand/yuoto/'] = { status: 200, body: '<html><head></head><body><h1>Yuoto</h1></body></html>' };
+  });
+  t.after(() => h.wp.close());
+  const r = await h.run('thin-archives');
+  const brand = r.findings.find(f => f.taxonomy === 'product_brand');
+  assert.ok(brand, 'a thin brand archive is found');
+  assert.equal(brand.id, 70);
+  assert.match(brand.detail, /brand, 0 products/);
+  assert.ok(!r.findings.some(f => f.id === 71), 'a populated brand is not flagged');
+  const plan = await planFix('noindex-thin-archive', { connector: h.connector, site: { companionPlugin: true }, findings: [brand] });
+  assert.equal(plan.ops[0].target.type, 'product_brand');
+  const res = await applyPlan({ connector: h.connector, site: {}, plan });
+  assert.equal(res.applied.length, 1, JSON.stringify(res.failed));
+  assert.deepEqual(h.wp.state.brands.find(b => b.id === 70).meta.rank_math_robots, ['noindex', 'follow']);
 });

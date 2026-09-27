@@ -213,3 +213,24 @@ export function itemCat(id) { const hit = ITEM_INDEX.get(id); return hit ? hit.c
 export function normalizeDomain(input) {
   return String(input || '').trim().toLowerCase().replace(/^https?:\/\//, '').replace(/\/.*$/, '').replace(/^www\./, '');
 }
+
+/**
+ * One status per checklist item, combining what a person ticked with what the latest check found.
+ * `finding` is the verdict shown for the item (scan or AI review), or null.
+ *   key: todo | done | verified | failing | conflict | passing | undecided | na
+ *   tone: plain | good | bad | warn | muted
+ */
+export function itemStatus(state, finding) {
+  const v = finding?.verdict || null;
+  const by = finding?.ai ? 'AI check' : 'scan';
+  if (state === 'na') return { key: 'na', label: 'Not applicable', tone: 'muted' };
+  if (v === 'fail') return state === 'done'
+    ? { key: 'conflict', label: `Ticked, but the ${by} says it fails`, tone: 'warn' }
+    : { key: 'failing', label: `Failing — found by the ${by}`, tone: 'bad' };
+  if (state === 'done') return v === 'pass'
+    ? { key: 'verified', label: `Done · confirmed by the ${by}`, tone: 'good' }
+    : { key: 'done', label: 'Done', tone: 'good' };
+  if (v === 'pass') return { key: 'passing', label: `The ${by} passed it — tick to confirm`, tone: 'good' };
+  if (v === 'unknown') return { key: 'undecided', label: `The ${by} couldn't decide`, tone: 'muted' };
+  return { key: 'todo', label: 'To do', tone: 'plain' };
+}

@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { CHECKLIST, TOTAL_ITEMS, CRITICAL } from '../js/checklist.js';
-import { nextItemState, toggleItemState, stateOf, pctFor, catStats, openCritCount, healthFor, flagCounts, sortFixReqs, columnOf, escapeHtml, relTime, clientSummary, fleetSummary } from '../js/model.js';
+import { nextItemState, toggleItemState, itemStatus, stateOf, pctFor, catStats, openCritCount, healthFor, flagCounts, sortFixReqs, columnOf, escapeHtml, relTime, clientSummary, fleetSummary } from '../js/model.js';
 import { emptyState, reduce, makeClient, makeSite, makeFlag, makeFixReq, migrate, createStore } from '../js/store.js';
 import { demoState } from '../js/seed.js';
 
@@ -152,4 +152,17 @@ test('store: legacy v1 clients are imported once, persist is called', async () =
   store.dispatch('theme/set', { theme: 'light' });
   await store.flush();
   assert.deepEqual(written, ['state/replace', 'theme/set']);
+});
+
+test('itemStatus: one status per item from the tick and the latest verdict', () => {
+  const k = (st, f) => itemStatus(st, f).key;
+  assert.equal(k('pending', null), 'todo');
+  assert.equal(k('done', null), 'done');
+  assert.equal(k('done', { verdict: 'pass' }), 'verified');
+  assert.equal(k('done', { verdict: 'fail' }), 'conflict', 'a ticked item whose check fails is called out');
+  assert.equal(k('pending', { verdict: 'fail' }), 'failing');
+  assert.equal(k('pending', { verdict: 'pass' }), 'passing');
+  assert.equal(k('pending', { verdict: 'unknown' }), 'undecided');
+  assert.equal(k('na', { verdict: 'fail' }), 'na', 'n/a wins: the item is excluded');
+  assert.match(itemStatus('pending', { verdict: 'fail', ai: true }).label, /AI check/);
 });

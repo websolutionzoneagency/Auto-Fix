@@ -46,6 +46,9 @@ export function defaultFixture() {
       '/blog/coil-guide/': { status: 200, body: html('<h1>Coil guide</h1>', '<link rel="canonical" href="https://vapewizarddxb.com/blog/coil-guide/">') },
       '/privacy-policy/': { status: 200, body: html('<h1>Privacy Policy</h1>', '<link rel="canonical" href="https://vapewizarddxb.com/privacy-policy/">') },
       '/shipping/': { status: 200, body: html('<h1>Shipping</h1>', '') },
+      '/product-category/disposables/': { status: 200, body: html('<h1>Disposables</h1>', '') },
+      '/product-category/disposable-vapes/': { status: 200, body: html('<h1>Disposable Vapes</h1>', '') },
+      '/product-category/pods/': { status: 200, body: html('<h1>Pods</h1>', '') },
       '/blog/gone/': { status: 404, body: '<h1>Not found</h1>' },
       '/shop/old-prefix/product/xyz/': { status: 404, body: '<h1>Not found</h1>' },
       '/wp-sitemap.xml': { status: 200, contentType: 'application/xml', body: `<?xml version="1.0"?><sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"><sitemap><loc>https://vapewizarddxb.com/wp-sitemap-posts-post-1.xml</loc></sitemap></sitemapindex>` },
@@ -93,13 +96,14 @@ export async function startMockWp(fixture = defaultFixture()) {
     if (p === '/wp-json/wp/v2/pages') return paged(state.pages);
     if (p === '/wp-json/wp/v2/media') return paged(state.media);
     if (p === '/wp-json/wp/v2/categories') return paged(state.categories);
+    if (p === '/wp-json/wp/v2/product_brand') return state.brands ? paged(state.brands) : send(404, { code: 'rest_no_route', message: 'No route' });
     if (p === '/wp-json/wp/v2/settings') {
       if (req.method === 'POST') { Object.assign(state.settings, body); return send(200, state.settings); }
       return send(200, state.settings);
     }
     let m;
-    if ((m = p.match(/^\/wp-json\/wp\/v2\/(posts|pages|media|users|categories)\/(\d+)$/))) {
-      const coll = { posts: state.posts, pages: state.pages, media: state.media, users: state.users, categories: state.categories }[m[1]];
+    if ((m = p.match(/^\/wp-json\/wp\/v2\/(posts|pages|media|users|categories|product_brand)\/(\d+)$/))) {
+      const coll = { posts: state.posts, pages: state.pages, media: state.media, users: state.users, categories: state.categories, product_brand: state.brands || [] }[m[1]];
       const row = coll.find(x => x.id === Number(m[2]));
       if (!row) return send(404, { code: 'rest_post_invalid_id', message: 'Invalid ID.' });
       if (req.method === 'POST') { deepMerge(row, body); return send(200, row); }

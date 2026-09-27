@@ -4,7 +4,7 @@
 import { restBase, seoKeys } from '../connectors/wordpress.js';
 
 const POST_TYPES = new Set(['posts', 'pages', 'product']);
-const TERM_TYPES = new Set(['categories', 'tags', 'product_cat', 'product_tag']);
+const TERM_TYPES = new Set(['categories', 'tags', 'product_cat', 'product_tag', 'product_brand']);
 const POST_FIELDS = new Set(['title', 'content', 'excerpt', 'meta.title', 'meta.description', 'meta.canonical', 'meta.robots']);
 const MEDIA_FIELDS = new Set(['alt_text', 'title', 'caption', 'description']);
 const TERM_FIELDS = new Set(['name', 'description', 'meta.title', 'meta.description', 'meta.robots']);
