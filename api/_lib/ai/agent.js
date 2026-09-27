@@ -20,14 +20,14 @@ const TOOL_RESULT_CHARS = 14000;
 const TOOLS = [
   { name: 'list_content', description: 'List published content of one type. Returns id, title, link and last-modified for up to `limit` entries (default 20, max 40). Use `search` to narrow by words in the title or body.',
     input_schema: { type: 'object', properties: { type: { type: 'string', enum: ['posts', 'pages', 'product'] }, search: { type: 'string' }, limit: { type: 'integer', minimum: 1, maximum: 40 } }, required: ['type'] } },
-  { name: 'get_content', description: 'Fetch one post, page or product: title, excerpt, body text (HTML stripped, truncated), SEO title/description/canonical/robots, featured image alt, link.',
+  { name: 'get_content', description: 'Fetch one post, page or product: title, excerpt, body text (HTML stripped, truncated), every link in the body (href + text), SEO title/description/canonical/robots, featured image alt, link.',
     input_schema: { type: 'object', properties: { type: { type: 'string', enum: ['posts', 'pages', 'product'] }, id: { type: 'integer' } }, required: ['type', 'id'] } },
   { name: 'list_media', description: 'List media library images: id, file name, alt text, title. `missing_alt: true` returns only images with no alt text.',
     input_schema: { type: 'object', properties: { missing_alt: { type: 'boolean' }, limit: { type: 'integer', minimum: 1, maximum: 60 } } } },
-  { name: 'list_terms', description: 'List taxonomy terms (categories, tags, product_cat, product_tag): id, name, slug, count, description, link, SEO title/description.',
-    input_schema: { type: 'object', properties: { taxonomy: { type: 'string', enum: ['categories', 'tags', 'product_cat', 'product_tag'] }, limit: { type: 'integer', minimum: 1, maximum: 100 } }, required: ['taxonomy'] } },
+  { name: 'list_terms', description: 'List taxonomy terms (categories, tags, product_cat, product_tag, product_brand): id, name, slug, count, description, link, SEO title/description/robots.',
+    input_schema: { type: 'object', properties: { taxonomy: { type: 'string', enum: ['categories', 'tags', 'product_cat', 'product_tag', 'product_brand'] }, limit: { type: 'integer', minimum: 1, maximum: 100 } }, required: ['taxonomy'] } },
   { name: 'get_settings', description: 'Site settings: title, tagline, URL, language, timezone, whether registration is open, and the detected SEO plugin.', input_schema: { type: 'object', properties: {} } },
-  { name: 'fetch_page', description: 'Fetch a public URL on this site as a visitor would (no credentials): HTTP status, <title>, canonical, meta robots, meta description, JSON-LD types, headings, visible text (truncated). Use it to verify what is actually live.',
+  { name: 'fetch_page', description: 'Fetch a public URL on this site as a visitor would (no credentials): HTTP status, <title>, canonical, meta robots, meta description, JSON-LD types, headings, every link (href + text, including nav and footer), visible text (truncated). Use it to verify what is actually live.',
     input_schema: { type: 'object', properties: { url: { type: 'string' } }, required: ['url'] } },
   { name: 'submit_review', description: 'Finish the review. Call exactly once, with the verdict and, for a fail, the edits you propose. Every edit names a target you inspected with the tools.',
     input_schema: { type: 'object', properties: {
@@ -163,8 +163,9 @@ async function runTool(name, input, { connector, seoPlugin }) {
     case 'get_content': {
       const type = pick(input.type, ['posts', 'pages', 'product']);
       const { data } = await connector.request(`/wp-json/wp/v2/${type}/${Number(input.id)}`, { query: { context: 'edit' } });
+      const html = rawText(data.content);
       return { id: data.id, type, link: data.link, status: data.status, title: rawText(data.title), excerpt: stripTags(rawText(data.excerpt)).slice(0, 1500),
-               body: stripTags(rawText(data.content)).slice(0, 6000), bodyChars: stripTags(rawText(data.content)).length, ...seo(data), featuredMedia: data.featured_media || null };
+               body: stripTags(html).slice(0, 6000), bodyChars: stripTags(html).length, links: linksIn(html), ...seo(data), featuredMedia: data.featured_media || null };
     }
     case 'list_media': {
       const rows = await connector.media({ limit: clampInt(input.limit, 30, 60) });
@@ -172,7 +173,7 @@ async function runTool(name, input, { connector, seoPlugin }) {
       return (input.missing_alt ? imgs.filter(r => !String(r.alt_text || '').trim()) : imgs).map(r => ({ id: r.id, file: String(r.source_url || '').split('/').pop(), url: r.source_url, alt: r.alt_text || '', title: rawText(r.title) }));
     }
     case 'list_terms': {
-      const tax = pick(input.taxonomy, ['categories', 'tags', 'product_cat', 'product_tag']);
+      const tax = pick(input.taxonomy, ['categories', 'tags', 'product_cat', 'product_tag', 'product_brand']);
       const rows = await connector.collect(`/wp-json/wp/v2/${tax}`, { limit: clampInt(input.limit, 50, 100), query: { context: 'edit', _fields: 'id,name,slug,count,description,link,meta' } });
       return rows.map(r => ({ id: r.id, name: r.name, slug: r.slug, count: r.count, link: r.link, description: stripTags(r.description || '').slice(0, 800), ...seo(r) }));
     }
@@ -189,6 +190,7 @@ async function runTool(name, input, { connector, seoPlugin }) {
                metaRobots: match(html, /<meta[^>]+name=["']robots["'][^>]*content=["']([^"']*)/i), metaDescription: match(html, /<meta[^>]+name=["']description["'][^>]*content=["']([^"']*)/i),
                jsonLdTypes: [...html.matchAll(/"@type"\s*:\s*"([^"]+)"/g)].map(m => m[1]).filter((v, i, a) => a.indexOf(v) === i).slice(0, 20),
                headings: [...html.matchAll(/<h([1-3])[^>]*>([\s\S]*?)<\/h\1>/gi)].map(m => `h${m[1]}: ${stripTags(m[2]).trim()}`).slice(0, 40),
+               links: linksIn(html),
                text: stripTags(html.replace(/<(script|style|noscript)[\s\S]*?<\/\1>/gi, '')).slice(0, 8000) };
     }
     default: throw new Error(`unknown tool ${name}`);
@@ -196,6 +198,18 @@ async function runTool(name, input, { connector, seoPlugin }) {
 }
 
 /* ---------- helpers ---------- */
+/** Every link on a page as { href, text } — the body text alone hides where links point. */
+function linksIn(html) {
+  const out = [], seen = new Set();
+  for (const m of String(html || '').matchAll(/<a\b[^>]*\bhref\s*=\s*["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi)) {
+    const href = m[1].trim();
+    if (!href || seen.has(href) || /^(mailto|tel|javascript):/i.test(href)) continue;
+    seen.add(href);
+    out.push({ href, text: stripTags(m[2]).slice(0, 80) });
+    if (out.length >= 150) break;
+  }
+  return out;
+}
 const rawText = (v) => (v && typeof v === 'object' ? (v.raw ?? v.rendered ?? '') : (v ?? ''));
 export function stripTags(html) { return String(html || '').replace(/<[^>]+>/g, ' ').replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').replace(/&#8217;|&rsquo;/g, '’').replace(/&quot;/g, '"').replace(/\s+/g, ' ').trim(); }
 function pick(v, allowed) { if (!allowed.includes(v)) throw new Error(`must be one of ${allowed.join(', ')}`); return v; }

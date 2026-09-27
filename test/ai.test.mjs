@@ -73,6 +73,9 @@ test('a review inspects the site with tools, then submits a fail with validated 
   const toolResults = ai.calls[2].messages.filter(m => m.role === 'user').flatMap(m => (Array.isArray(m.content) ? m.content : [])).filter(b => b.type === 'tool_result');
   assert.equal(toolResults.length, 4);                                // 3 tool results + the submit_review acknowledgement (shared history)
   assert.match(toolResults[1].content, /Best disposables/);
+  // Link targets are returned, not just the stripped text — an item about links can't be judged without them.
+  assert.match(toolResults[1].content, /\/shop\/old-prefix\/product\/xyz\//, 'get_content lists the body links');
+  assert.match(toolResults[2].content, /competitor\.example/, 'fetch_page lists the page links');
   assert.equal(toolResults[3].content, 'recorded');
   assert.equal(ai.calls[0].tools, TOOLS);
 });

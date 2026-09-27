@@ -176,23 +176,36 @@ export const CHECKS = {
     label: 'Thin archives pruned or noindexed',
     async run({ connector, ctx }) {
       const min = ctx?.thinThreshold ?? 3;
-      const cats = await connector.categories({ limit: 300 }).catch(() => []);
-      if (!cats.length) return unknown('No categories returned');
+      // Blog categories, WooCommerce product categories and product brands — a store's thin archives are
+      // usually the product ones. A taxonomy the site doesn't expose over REST is simply skipped.
+      const taxes = [
+        { rest: 'categories', label: 'blog category', unit: 'post' },
+        { rest: 'product_cat', label: 'product category', unit: 'product' },
+        { rest: 'product_brand', label: 'brand', unit: 'product' },
+      ];
+      const terms = [];
+      for (const t of taxes) {
+        const rows = await connector.collect(`/wp-json/wp/v2/${t.rest}`, { limit: 300, query: { _fields: 'id,name,slug,count,link,meta' } }).catch(() => null);
+        if (rows) for (const r of rows) terms.push({ ...r, tax: t });
+      }
+      if (!terms.length) return unknown('No categories or brands returned');
       // The live page's robots tag is the truth: the REST field only exists with the companion plugin,
-      // so without it a category already noindexed in Rank Math would otherwise be flagged forever.
+      // so without it an archive already noindexed in Rank Math would otherwise be flagged forever.
       const findings = [];
       let unreadable = 0;
-      for (const c of cats.filter(c => (c.count ?? 0) < min && !hasNoindex(c)).slice(0, 40)) {
+      for (const c of terms.filter(c => (c.count ?? 0) < min && !hasNoindex(c)).slice(0, 60)) {
         const page = c.link ? await connector.fetchPublic(c.link).catch(() => null) : null;
         if (!page) { unreadable++; continue; }
         if (page.status === 200 && /noindex/.test(metaRobots(page.text) || '')) continue;   // already noindexed live
         if (page.status !== 200) continue;                                                 // not a live page: nothing to index
-        findings.push({ id: c.id, name: c.name, url: c.link, count: c.count, detail: `${c.count} post${c.count === 1 ? '' : 's'}, indexable` });
+        const n = c.count ?? 0;
+        findings.push({ id: c.id, taxonomy: c.tax.rest, name: c.name, url: c.link, count: n, unit: c.tax.unit,
+                        detail: `${c.tax.label}, ${n} ${c.tax.unit}${n === 1 ? '' : 's'}, indexable` });
       }
-      if (!findings.length && unreadable) return unknown(`${unreadable} thin categor${unreadable === 1 ? 'y' : 'ies'} could not be fetched to check their robots tag`);
+      if (!findings.length && unreadable) return unknown(`${unreadable} thin archive${unreadable === 1 ? '' : 's'} could not be fetched to check the robots tag`);
       return findings.length
-        ? fail(`${findings.length} thin categor${findings.length === 1 ? 'y' : 'ies'} still indexable (under ${min} posts)`, findings)
-        : pass(`Every category has ≥${min} posts or is noindexed`);
+        ? fail(`${findings.length} thin archive${findings.length === 1 ? '' : 's'} still indexable (fewer than ${min} items)`, findings)
+        : pass(`Every category and brand archive has ${min}+ items or is noindexed`);
     },
   },
 

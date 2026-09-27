@@ -32,7 +32,8 @@ const ui = {
   tmplSearch: '',
   // per-site automation data from the API (never persisted in the console state)
   connection: {}, findings: {}, fixOps: {}, scanJob: {}, loaded: {}, busy: {},
-  ai: null, aiRun: null,                       // agency AI settings; the in-progress "AI audit" run on a site
+  ai: null, aiRun: null,
+  openItems: new Set(),                        // '<siteId>:<itemId>' rows whose details are expanded                       // agency AI settings; the in-progress "AI audit" run on a site
 };
 const SUBS_ALL = ['checklist', 'fixreq', 'siteflags', 'log', 'automation'];
 
@@ -113,6 +114,16 @@ function flagRow(s, f, { compact = false } = {}) {
 function logText(text) {
   const i = text.indexOf(' — ');
   return i > 0 ? `<b>${esc(text.slice(0, i))}</b> — ${esc(text.slice(i + 3))}` : esc(text);
+}
+/** Records the demo dataset created that still exist: the three sample clients (with their sites) and
+ *  the sample flags and fix requests it put on Vape Wizard DXB. Derived from the seed itself, by id. */
+function sampleRecords(s) {
+  const demo = demoState();
+  return {
+    clients: Object.keys(demo.clients).filter(id => id !== 'c_vapewizard' && s.clients[id]),
+    flags: Object.values(demo.flags).filter(f => f.siteId === 's_vapewizard' && s.flags[f.id]).map(f => f.id),
+    fixes: Object.values(demo.fixReqs).filter(r => r.siteId === 's_vapewizard' && s.fixReqs[r.id]).map(r => r.id),
+  };
 }
 function initialsOf(name) { return String(name || '').split(/\s+/).map(w => w[0]).join('').slice(0, 2).toUpperCase() || '—'; }
 
@@ -328,54 +339,73 @@ function itemRow(site, it, openReq) {
   const st = M.stateOf(site.items, it.id);
   const ev = (site.evidence && site.evidence[it.id]) || null;
   const finding = API ? findingForItem(it.id) : null;
-  let sub = '';
-  if (st === 'done') {
-    sub += `<span class="ev-date">checked ${M.fmtDate(ev && ev.checkedAt)}</span>`;
-    if (ui.editingEvidence === it.id) {
-      sub += `<input type="url" data-evidence-input data-item="${it.id}" value="${esc(ev && ev.url || '')}" placeholder="https://… evidence URL (Enter to save, Esc to cancel)" aria-label="Evidence URL">`;
-    } else if (ev && ev.url) {
-      sub += `<a href="${esc(ev.url)}" target="_blank" rel="noopener">evidence ↗</a><button class="ev-btn" data-action="evidence-edit" data-item="${it.id}">edit</button>`;
-    } else if (finding?.evidenceUrl && finding.verdict === 'pass') {
-      // Ticked by (or agreeing with) a scan: keep showing the evidence the scan found.
-      sub += `<a href="${esc(finding.evidenceUrl)}" target="_blank" rel="noopener" title="found by the ${finding.ai ? 'AI review' : 'scan'}">evidence ↗</a><button class="ev-btn" data-action="evidence-edit" data-item="${it.id}">edit</button>`;
-    } else {
-      sub += `<button class="ev-btn" data-action="evidence-edit" data-item="${it.id}">+ evidence link</button>`;
-    }
+  const status = M.itemStatus(st, finding);
+  const connected = API && siteConnected(site.id);
+
+  // AI review in flight for this item (single review or part of an AI audit run)?
+  const info = ui.busy['ai:' + site.id + ':' + it.id];
+  const startedAt = info?.startedAt
+    ?? (ui.aiRun && ui.aiRun.siteId === site.id && ui.aiRun.current === it.id ? ui.aiRun.currentStartedAt : null);
+  const busy = startedAt != null;
+
+  // ONE main action: the next useful step for this item, nothing else competes with it.
+  let primary = '';
+  if (busy) primary = `<button type="button" class="act primary" disabled>Checking… ${esc(elapsedLabel(startedAt) + progressLabel(info?.progress))}</button>`;
+  else if (st !== 'na' && finding?.verdict === 'fail' && finding.fixId) {
+    primary = `<button type="button" class="act primary" data-action="fix-plan" data-finding="${esc(finding.id)}" title="See exactly what will change on the site before anything is written">${finding.ai ? 'Review AI fix' : 'Fix it'}</button>`;
+  } else if (connected && st !== 'na' && ['todo', 'failing', 'conflict', 'undecided', 'passing'].includes(status.key)) {
+    primary = `<button type="button" class="act" data-action="ai-review" data-item="${it.id}" title="The AI inspects the live site for this item and drafts a fix if it fails">${finding?.ai ? 'Check again' : 'Check with AI'}</button>`;
   }
-  const tier = tierOf(it.id);
-  if (finding) {
-    sub += `<span class="verdict ${esc(finding.verdict)}${finding.ai ? ' ai' : ''}" title="${finding.ai ? 'AI review' : 'scanner'}">${finding.ai ? 'AI: ' : ''}${finding.verdict === 'unknown' ? 'not decided' : finding.verdict}</span><span class="scan-summary" title="${esc(finding.note || '')}">${esc(finding.summary || '')}</span>`;
-    if (finding.verdict === 'fail' && finding.fixId) sub += `<button type="button" class="fix-now" data-action="fix-plan" data-finding="${esc(finding.id)}">${finding.ai ? 'Review AI edits →' : 'Fix →'}</button>`;
-    else if (finding.verdict === 'fail' && !finding.ai && FIX_BLOCKED_REASON[it.id]) sub += `<span title="${esc(FIX_BLOCKED_REASON[it.id])}" style="cursor:help">why manual?</span>`;
-    if (finding.evidenceUrl && st !== 'done') sub += `<a href="${esc(finding.evidenceUrl)}" target="_blank" rel="noopener">evidence ↗</a>`;
+
+  // Everything else lives in the ⋯ menu.
+  const menu = [];
+  if (connected && st !== 'na' && !busy && !primary.includes('ai-review')) menu.push(`<button type="button" data-action="ai-review" data-item="${it.id}">${finding?.ai ? 'Check again with AI' : 'Check with AI'}</button>`);
+  if (st !== 'na') {
+    if (openReq) menu.push(`<button type="button" data-action="tab" data-sub="fixreq">In the team to-do list (${esc(M.reqStatusMeta(openReq.status).label)}) →</button>`);
+    else if (st !== 'done') menu.push(`<button type="button" data-action="request-fix" data-item="${it.id}">Add to the team to-do list…</button>`);
   }
-  if (API && st !== 'na' && siteConnected(site.id)) {
-    const info = ui.busy['ai:' + site.id + ':' + it.id];
-    const startedAt = info?.startedAt
-      ?? (ui.aiRun && ui.aiRun.siteId === site.id && ui.aiRun.current === it.id ? ui.aiRun.currentStartedAt : null);
-    const busy = startedAt != null;
-    const label = busy ? `reviewing… ${elapsedLabel(startedAt)}${progressLabel(info?.progress)}` : (finding?.ai ? 'AI review again' : 'AI review');
-    sub += `<button type="button" class="ai-btn" data-action="ai-review" data-item="${it.id}" ${busy ? 'disabled' : ''} title="Have the AI inspect the live site for this item and propose edits">${esc(label)}</button>`;
+  menu.push(`<button type="button" data-action="evidence-edit" data-item="${it.id}">${ev?.url ? 'Edit evidence link' : 'Add evidence link'}</button>`);
+  menu.push(st === 'na'
+    ? `<button type="button" data-action="item-cycle" data-item="${it.id}">Make applicable again</button>`
+    : `<button type="button" data-action="item-na" data-item="${it.id}">Not applicable to this site</button>`);
+
+  // Details: what the check found, why, and the evidence — shown when the item is opened.
+  const open = ui.openItems.has(site.id + ':' + it.id);
+  const evUrl = ev?.url || (finding?.verdict === 'pass' ? finding.evidenceUrl : null) || (st !== 'done' ? finding?.evidenceUrl : null);
+  const blockedWhy = finding?.verdict === 'fail' && !finding.fixId && !finding.ai ? FIX_BLOCKED_REASON[it.id] : null;
+  let details = '';
+  if (open) {
+    const parts = [];
+    if (it.hint) parts.push(`<div class="d-row"><span class="d-k">Done when</span><span>${esc(it.hint.replace(/^Done\s*=\s*/i, ''))}</span></div>`);
+    if (finding) parts.push(`<div class="d-row"><span class="d-k">${finding.ai ? 'AI check' : 'Scan'} · ${esc(M.relTime(finding.createdAt))}</span><span>${esc(finding.summary || '')}</span></div>`);
+    if (finding?.note) parts.push(`<div class="d-note">${esc(finding.note)}</div>`);
+    if (blockedWhy) parts.push(`<div class="d-row"><span class="d-k">Why no automatic fix</span><span>${esc(blockedWhy)}</span></div>`);
+    if (st === 'done' && ev?.checkedAt) parts.push(`<div class="d-row"><span class="d-k">Ticked</span><span>${esc(M.fmtDate(ev.checkedAt))}</span></div>`);
+    if (!parts.length) parts.push(`<div class="d-note">Not checked yet.${connected ? ' Use “Check with AI”, or run a scan from the Automation tab.' : ''}</div>`);
+    details = `<div class="item-details">${parts.join('')}</div>`;
   }
-  if (st === 'pending') {
-    if (openReq) {
-      const m = M.reqStatusMeta(openReq.status);
-      sub += `<span class="pill ${m.cls}">${esc(m.label)}</span><span class="prio ${openReq.priority}">${openReq.priority.toUpperCase()}</span><button class="ev-btn" data-action="tab" data-sub="fixreq">view in queue</button>`;
-    } else {
-      sub += `<button class="fix-btn" data-action="request-fix" data-item="${it.id}">Request fix</button>`;
-    }
-    sub += `<button class="ev-btn" data-action="item-na" data-item="${it.id}" title="Exclude this item from the checklist for this site">not applicable</button>`;
-  }
-  return `<div class="item state-${st}${it.crit ? ' crit' : ''}${openReq ? ' has-fix' : ''}" data-item="${it.id}">
-    <button class="state-btn" data-action="item-cycle" data-item="${it.id}" data-state="${st}" aria-label="${esc(it.id)}: ${st}. Click to mark ${M.toggleItemState(st)}" title="${st === 'na' ? 'not applicable — click to make it applicable again' : `click to mark ${M.toggleItemState(st)}`}"></button>
+  const editing = ui.editingEvidence === it.id
+    ? `<div class="item-sub"><input type="url" data-evidence-input data-item="${it.id}" value="${esc(ev && ev.url || '')}" placeholder="https://… evidence URL (Enter to save, Esc to cancel)" aria-label="Evidence URL"></div>` : '';
+
+  const aria = st === 'na' ? 'not applicable — click to make applicable again' : `click to mark ${M.toggleItemState(st)}`;
+  return `<div class="item state-${st} status-${status.key}${it.crit ? ' crit' : ''}${openReq ? ' has-fix' : ''}${open ? ' open' : ''}" data-item="${it.id}">
+    <button class="state-btn" data-action="item-cycle" data-item="${it.id}" data-state="${st}" aria-label="${esc(it.id)}: ${st}, ${aria}" title="${esc(aria)}"></button>
     <div class="item-body">
       <div class="item-row1">
-        <span class="item-code">${esc(it.id)}</span>
-        <span class="item-label${it.hint ? ' hinted' : ''}" data-action="item-cycle" data-item="${it.id}"${it.hint ? ` title="${esc(it.hint)}"` : ''}>${esc(it.label)}</span>
+        <button type="button" class="item-label" data-action="item-open" data-item="${it.id}" aria-expanded="${open}"><span class="item-code">${esc(it.id)}</span> ${esc(it.label)}</button>
         ${it.crit ? '<span class="crit-badge">Critical</span>' : ''}
-        ${tier !== 'manual' ? `<span class="tier ${tier}" title="${tier === 'auto' ? 'The scanner decides this and can fix it' : 'The scanner decides this; fixing it needs you'}">${TIER_LABEL[tier]}</span>` : ''}
       </div>
-      ${sub ? `<div class="item-sub">${sub}</div>` : ''}
+      <div class="item-sub">
+        <span class="status-chip ${status.tone}">${esc(status.label)}</span>
+        ${finding?.summary && !open && status.key !== 'done' && status.key !== 'todo' ? `<span class="scan-summary" title="${esc(finding.summary)}">${esc(finding.summary)}</span>` : ''}
+        ${evUrl ? `<a href="${esc(evUrl)}" target="_blank" rel="noopener">evidence ↗</a>` : ''}
+        ${openReq ? `<button type="button" class="ev-btn" data-action="tab" data-sub="fixreq">on the team to-do list · ${esc(M.reqStatusMeta(openReq.status).label.toLowerCase())}</button>` : ''}
+      </div>
+      ${editing}${details}
+    </div>
+    <div class="item-actions">
+      ${primary}
+      <details class="more"><summary aria-label="More actions for ${esc(it.id)}">⋯</summary><div class="menu">${menu.join('')}</div></details>
     </div>
   </div>`;
 }
@@ -438,6 +468,10 @@ function renderTemplates() {
     </div>`;
   }).join('') || '<div class="empty-note big">No items match.</div>';
   const mode = $('#backend-mode'); mode.textContent = adapter.name; mode.classList.toggle('api', adapter.name === 'api');
+  // "Reset to demo data" would overwrite a real agency's database — local demo mode only.
+  $('#reset-demo-btn').hidden = API;
+  const sample = sampleRecords(store.state);
+  $('#remove-sample-btn').hidden = !(sample.clients.length + sample.flags.length + sample.fixes.length);
   $('#backend-note').textContent = adapter.name === 'api'
     ? `Synced through ${CONFIG.apiBase} — every change is written to the shared database and other open consoles pick it up within seconds.`
     : 'Local mode: data lives in this browser only. Export a JSON backup before clearing site data, or turn on the API backend (README → "Turning on the backend") to share across devices and teammates.';
@@ -559,6 +593,10 @@ document.addEventListener('change', e => {
 });
 
 /* ---------- click delegation ---------- */
+// A ⋯ menu closes when you pick something in it or click anywhere else.
+document.addEventListener('click', e => {
+  for (const d of document.querySelectorAll('details.more[open]')) if (!d.contains(e.target) || e.target.closest('.menu [data-action]')) d.open = false;
+}, true);
 document.addEventListener('click', e => {
   const el = e.target.closest('[data-action]'); if (!el) return;
   // Real links (sidebar): let the browser open a new tab/window for modified or middle clicks.
@@ -609,6 +647,12 @@ document.addEventListener('click', e => {
       store.dispatch('item/set', { siteId: site.id, itemId: d.item, state: next });
       break;
     }
+    case 'item-open': {
+      const k = ui.siteId + ':' + d.item;
+      if (ui.openItems.has(k)) ui.openItems.delete(k); else ui.openItems.add(k);
+      render();
+      break;
+    }
     case 'item-na': {
       const site = s.sites[ui.siteId]; if (!site) break;
       store.dispatch('item/set', { siteId: site.id, itemId: d.item, state: 'na' });
@@ -644,12 +688,29 @@ document.addEventListener('click', e => {
     case 'ai-audit': if (s.sites[ui.siteId]) startAiAudit(ui.siteId, d.scope || 'pending'); break;
     case 'ai-audit-stop': if (ui.aiRun) { ui.aiRun.stop = true; render(); } break;
     case 'ai-clear-key': clearAiKey(); break;
+    case 'ai-autoapply-off': setAutoApply(false); break;
+    case 'auto-conn-test': if (s.sites[ui.siteId]) retestConnection(ui.siteId); break;
     case 'fix-revert': revertOps([d.op]); break;
     case 'toggle-pause': togglePause(!ui.connection[ui.siteId]?.paused); break;
     case 'sign-out': auth.signOut().then(() => location.reload()); break;
     case 'theme': store.dispatch('theme/set', { theme: s.theme === null ? 'dark' : (s.theme === 'dark' ? 'light' : null) }); break;
     case 'export': exportJson(s); break;
     case 'import': $('#import-input').click(); break;
+    case 'remove-sample': {
+      const r = sampleRecords(s);
+      const names = r.clients.map(id => s.clients[id].name);
+      const lines = [
+        names.length ? `• ${names.length} sample client${names.length === 1 ? '' : 's'} and their sites: ${names.join(', ')}` : '',
+        r.flags.length ? `• ${r.flags.length} sample flag${r.flags.length === 1 ? '' : 's'} on Vape Wizard DXB` : '',
+        r.fixes.length ? `• ${r.fixes.length} sample to-do item${r.fixes.length === 1 ? '' : 's'} on Vape Wizard DXB` : '',
+      ].filter(Boolean);
+      if (!lines.length || !confirm(`Remove the sample records the demo created?\n\n${lines.join('\n')}\n\nYour own clients, sites, checklist ticks and scan results are kept.`)) break;
+      for (const id of r.clients) store.dispatch('client/remove', { id });
+      for (const id of r.flags) store.dispatch('flag/remove', { id });
+      for (const id of r.fixes) store.dispatch('fix/remove', { id });
+      toast('Sample data removed.');
+      break;
+    }
     case 'reset-demo':
       if (confirm('Replace all data with the demo dataset?')) { store.dispatch('state/replace', { state: demoState() }); toast('Demo data restored.'); go('dashboard'); }
       break;
@@ -723,47 +784,71 @@ function renderAutomation(s, site) {
   }
   const busy = ui.busy['scan:' + site.id];
   const running = job && (job.status === 'queued' || job.status === 'running');
-  const bar = `<div class="scan-bar${conn.paused ? ' paused' : ''}">
-      ${conn.paused ? '<b>⏸ Writes are paused for this site.</b>' : `Connected to <b>${esc(conn.baseUrl)}</b>${conn.seoPlugin ? ' · ' + esc(conn.seoPlugin) : ''}${conn.capabilities?.companionPlugin ? ' · companion plugin' : ' · <span title="Install wordpress-plugin/ for revision and debug checks">no companion plugin</span>'}`}
-      ${job ? ` · last scan ${esc(job.status)} ${M.relTime(job.finishedAt || job.createdAt)}${running ? ` (${job.pending.length} checks pending — Cron continues them)` : ''}` : ' · never scanned'}
-      <span class="spacer"></span>
-      <button class="btn-mini" data-action="toggle-pause">${conn.paused ? 'Resume writes' : 'Pause writes'}</button>
-      <button class="link-btn" data-action="scan-now" ${busy ? 'disabled' : ''}>${busy ? 'Scanning…' : (running ? 'Re-check now' : 'Scan now')}</button>
-    </div>`;
-  const rows = findings.length ? findings.map(f => {
-    const canFix = f.verdict === 'fail' && f.fixId;
-    const reason = f.verdict === 'fail' && !f.fixId ? (FIX_BLOCKED_REASON[f.itemIds[0]] || '') : '';
-    return `<tr>
-      <td class="mono">${esc(f.ai ? 'AI review' : f.checkId)}<div class="details">${f.itemIds.map(esc).join(', ')}</div></td>
-      <td><span class="verdict ${esc(f.verdict)}${f.ai ? ' ai' : ''}">${f.verdict === 'unknown' ? (f.ai ? 'not decided' : 'not checked') : f.verdict}</span></td>
-      <td><div class="summary">${esc(f.summary || '')}</div>${f.note ? `<div class="details">${esc(f.note)}</div>` : ''}
-        ${f.details && f.details.length ? `<details><summary class="details">${f.details.length} detail${f.details.length === 1 ? '' : 's'}</summary><div class="details">${f.details.slice(0, 25).map(d => `<div>${esc(d.url || d.name || d.detail || '')}${d.url && d.detail ? ' — ' + esc(d.detail) : ''}</div>`).join('')}${f.details.length > 25 ? `<div>… ${f.details.length - 25} more</div>` : ''}</div></details>` : ''}
-      </td>
-      <td class="mono">${M.relTime(f.createdAt)}</td>
-      <td>${f.evidenceUrl ? `<a href="${esc(f.evidenceUrl)}" target="_blank" rel="noopener" class="btn-mini">evidence ↗</a> ` : ''}
-          ${canFix ? `<button class="fix-now" data-action="fix-plan" data-finding="${esc(f.id)}">${f.ai ? 'Review AI edits →' : 'Fix →'}</button>` : (reason ? `<span class="tier check" title="${esc(reason)}" style="cursor:help">manual</span>` : '')}</td>
-    </tr>`;
-  }).join('') : `<tr><td colspan="5" class="empty-note">No scan results yet. ${running ? 'A scan is in progress.' : 'Click <b>Scan now</b>.'}</td></tr>`;
-  const opRows = ops.length ? ops.slice(0, 100).map(o => `<tr class="op-row">
-      <td class="mono">${esc(o.fixId)}${o.itemId ? `<div class="details">${esc(o.itemId)}</div>` : ''}</td>
-      <td class="status-${esc(o.status)}">${esc(o.status)}${o.error ? `<div class="details" style="color:var(--coral)">${esc(o.error)}</div>` : ''}</td>
-      <td>${esc(o.describe || '')}${o.target?.url ? `<div class="details">${esc(o.target.url)}</div>` : ''}</td>
-      <td class="mono">${M.relTime(o.appliedAt || o.createdAt)}</td>
-      <td>${o.status === 'applied' && !o.irreversible ? `<button class="btn-mini danger" data-action="fix-revert" data-op="${esc(o.id)}">Revert</button>` : (o.irreversible && o.status === 'applied' ? '<span class="tier" title="This change cannot be undone">irreversible</span>' : '')}</td>
-    </tr>`).join('') : '<tr><td colspan="5" class="empty-note">No fixes applied yet.</td></tr>';
+  const plugin = !!conn.capabilities?.companionPlugin;
+  const ai = ui.ai;
   const run = ui.aiRun && ui.aiRun.siteId === site.id ? ui.aiRun : null;
-  const aiConfigured = ui.ai ? ui.ai.configured : null;
-  const aiBar = `<div class="scan-bar">
-      <b>✦ AI audit</b> ${aiConfigured === false ? '— <button class="link-btn" data-action="nav" data-view="ai" style="padding:2px 8px">add an API key first</button>' : 'lets the model inspect the live site for every pending item and draft the fixes'}${ui.ai?.autoApply ? ' · <b>auto-apply is ON</b>' : ' · edits wait for your approval'}
+
+  // Setup: each line says what state it's in and carries the one button that changes it.
+  const step = (ok, title, body, action = '') => `<div class="setup-step ${ok === true ? 'ok' : ok === false ? 'todo' : 'info'}">
+      <span class="mark" aria-hidden="true">${ok === true ? '✓' : ok === false ? '!' : '•'}</span>
+      <div class="txt"><b>${title}</b><div>${body}</div></div><div class="btns">${action}</div></div>`;
+  const setup = [
+    step(!conn.paused, conn.paused ? 'Writes are paused' : 'Connected',
+      `${esc(conn.baseUrl)}${conn.seoPlugin ? ` · ${esc(conn.seoPlugin)}` : ''}${conn.paused ? ' — no fix can change the site until you resume.' : ''}`,
+      `<button class="btn-mini" data-action="toggle-pause">${conn.paused ? 'Resume writes' : 'Pause writes'}</button>`),
+    step(plugin, plugin ? 'Companion plugin installed' : 'Companion plugin missing',
+      plugin ? 'SEO-field fixes (canonical, noindex) and the revision check can run.'
+             : 'Needed for SEO-field fixes (canonical, noindex) and the revision check. Upload <code>wordpress-plugin/rankops-connector.php</code> from the repo into <code>wp-content/mu-plugins/</code> on the site, then re-test.',
+      `<button class="btn-mini" data-action="auto-conn-test" ${ui.busy['conntest:' + site.id] ? 'disabled' : ''}>${ui.busy['conntest:' + site.id] ? 'Testing…' : 'Re-test connection'}</button>`),
+    step(ai ? ai.configured : null, !ai ? 'AI' : ai.configured ? `AI ready · ${esc(ai.model)}` : 'No AI key',
+      !ai ? 'loading…' : !ai.configured ? 'Add a Claude or OpenAI key to check items and draft fixes with AI.'
+        : ai.autoApply ? '<span class="warn-text">Auto-apply is ON: AI edits are written to the site without asking you first.</span>' : 'AI edits wait for your approval before anything is written.',
+      !ai ? '' : !ai.configured ? '<a class="btn-mini" href="#/ai">Add key</a>' : ai.autoApply ? '<button class="btn-mini" data-action="ai-autoapply-off">Turn auto-apply off</button>' : ''),
+    step(job ? job.status === 'done' : false, running ? 'Scan running…' : job ? `Last scan ${esc(M.relTime(job.finishedAt || job.createdAt))}` : 'Never scanned',
+      running ? `${job.pending.length} checks left — they continue in the background.` : 'Checks the live site and ticks, or un-ticks, the checklist items it can verify.',
+      `<button class="link-btn" data-action="scan-now" ${busy ? 'disabled' : ''}>${busy ? 'Scanning…' : 'Run full scan'}</button>`),
+  ].join('');
+
+  const aiCard = `<div class="scan-bar">
+      <b>✦ AI audit</b>&nbsp;checks every open item on the live site, one by one, and drafts fixes.
       <span class="spacer"></span>
-      ${run ? `<span class="ai-progress" style="margin:0">${run.done}/${run.total} reviewed · ${run.pass} pass · ${run.fail} fail · ${run.unknown} undecided${run.current ? ` · now: ${esc(run.current)} (${elapsedLabel(run.currentStartedAt)}${esc(progressLabel(ui.busy['ai:' + site.id + ':' + run.current]?.progress))})` : ''}${run.stop ? ' · stopping…' : ''}</span><button class="btn-mini danger" data-action="ai-audit-stop" ${run.stop ? 'disabled' : ''}>Stop</button>`
-          : `<button class="btn-mini" data-action="ai-audit" data-scope="critical" ${aiConfigured === false ? 'disabled' : ''}>Review critical items</button><button class="link-btn" data-action="ai-audit" data-scope="pending" ${aiConfigured === false ? 'disabled' : ''}>Review all pending items</button>`}
+      ${run ? `<span class="ai-progress" style="margin:0">${run.done}/${run.total} checked · ${run.pass} pass · ${run.fail} fail · ${run.unknown} undecided${run.current ? ` · now ${esc(run.current)} (${elapsedLabel(run.currentStartedAt)}${esc(progressLabel(ui.busy['ai:' + site.id + ':' + run.current]?.progress))})` : ''}${run.stop ? ' · stopping…' : ''}</span><button class="btn-mini danger" data-action="ai-audit-stop" ${run.stop ? 'disabled' : ''}>Stop</button>`
+          : `<button class="btn-mini" data-action="ai-audit" data-scope="critical" ${ai?.configured ? '' : 'disabled'}>Critical items</button><button class="link-btn" data-action="ai-audit" data-scope="pending" ${ai?.configured ? '' : 'disabled'}>All open items</button>`}
     </div>`;
-  $('#automation-body').innerHTML = bar + aiBar + `
-    <div class="card"><div class="card-head"><h3>Scan results</h3><span class="hint">${findings.filter(f => f.verdict === 'fail').length} failing · ${findings.filter(f => f.verdict === 'pass').length} passing · ${findings.filter(f => f.verdict === 'unknown').length} could not run</span></div>
-      <div class="card-body"><table class="auto-table"><thead><tr><th>Check</th><th>Verdict</th><th>Result</th><th>When</th><th></th></tr></thead><tbody>${rows}</tbody></table></div></div>
-    <div class="card"><div class="card-head"><h3>Applied fixes</h3><span class="hint">every change stores what it replaced — revert restores it</span></div>
-      <div class="card-body"><table class="auto-table"><thead><tr><th>Fix</th><th>Status</th><th>Change</th><th>When</th><th></th></tr></thead><tbody>${opRows}</tbody></table></div></div>`;
+
+  // Results: failures first, then undecided, then passes. Long AI reasoning is folded away.
+  const order = { fail: 0, unknown: 1, pass: 2 };
+  const sorted = [...findings].sort((a, b) => (order[a.verdict] - order[b.verdict]) || String(a.itemIds[0]).localeCompare(String(b.itemIds[0])));
+  const rows = sorted.length ? sorted.map(f => {
+    const canFix = f.verdict === 'fail' && f.fixId;
+    const reason = f.verdict === 'fail' && !f.fixId && !f.ai ? (FIX_BLOCKED_REASON[f.itemIds[0]] || '') : '';
+    const verdictLabel = f.verdict === 'unknown' ? 'undecided' : f.verdict;
+    return `<tr>
+      <td><div class="summary">${esc(f.itemIds.join(', '))} · ${esc(M.itemLabel(f.itemIds[0]))}</div><div class="details">${f.ai ? 'AI check' : 'scan'} · ${M.relTime(f.createdAt)}</div></td>
+      <td><span class="status-chip ${f.verdict === 'pass' ? 'good' : f.verdict === 'fail' ? 'bad' : 'muted'}">${verdictLabel}</span></td>
+      <td><div class="summary">${esc(f.summary || '')}</div>
+        ${f.note ? `<details><summary class="details">why</summary><div class="details" style="white-space:pre-wrap">${esc(f.note)}</div></details>` : ''}
+        ${f.details && f.details.length ? `<details><summary class="details">${f.details.length} affected ${f.details.length === 1 ? 'page' : 'pages'}</summary><div class="details">${f.details.slice(0, 25).map(d => `<div>${esc(d.url || d.target?.url || d.name || d.describe || d.detail || '')}${d.url && d.detail ? ' — ' + esc(d.detail) : ''}</div>`).join('')}${f.details.length > 25 ? `<div>… ${f.details.length - 25} more</div>` : ''}</div></details>` : ''}
+        ${reason ? `<div class="details">Why no automatic fix: ${esc(reason)}</div>` : ''}
+      </td>
+      <td style="white-space:nowrap">${f.evidenceUrl ? `<a href="${esc(f.evidenceUrl)}" target="_blank" rel="noopener" class="btn-mini">evidence ↗</a> ` : ''}
+          ${canFix ? `<button class="act primary" data-action="fix-plan" data-finding="${esc(f.id)}">${f.ai ? 'Review AI fix' : 'Fix it'}</button>` : ''}</td>
+    </tr>`;
+  }).join('') : `<tr><td colspan="4" class="empty-note">No results yet. ${running ? 'A scan is running.' : 'Click <b>Run full scan</b> above.'}</td></tr>`;
+  const opRows = ops.length ? ops.slice(0, 100).map(o => `<tr class="op-row">
+      <td>${esc(o.describe || o.fixId)}${o.target?.url ? `<div class="details">${esc(o.target.url)}</div>` : ''}</td>
+      <td class="status-${esc(o.status)}">${esc(o.status)}${o.error ? `<div class="details" style="color:var(--coral)">${esc(o.error)}</div>` : ''}</td>
+      <td class="mono">${o.itemId ? esc(o.itemId) + ' · ' : ''}${M.relTime(o.appliedAt || o.createdAt)}</td>
+      <td>${o.status === 'applied' && !o.irreversible ? `<button class="btn-mini danger" data-action="fix-revert" data-op="${esc(o.id)}">Revert</button>` : (o.irreversible && o.status === 'applied' ? '<span class="tier" title="This change cannot be undone">irreversible</span>' : '')}</td>
+    </tr>`).join('') : '<tr><td colspan="4" class="empty-note">No changes made to the site yet.</td></tr>';
+  const nFail = findings.filter(f => f.verdict === 'fail').length, nPass = findings.filter(f => f.verdict === 'pass').length, nUnk = findings.filter(f => f.verdict === 'unknown').length;
+  $('#automation-body').innerHTML = `
+    <div class="card"><div class="card-head"><h3>Setup</h3></div><div class="card-body setup">${setup}</div></div>
+    ${aiCard}
+    <div class="card"><div class="card-head"><h3>Results</h3><span class="hint">${nFail} failing · ${nUnk} undecided · ${nPass} passing</span></div>
+      <div class="card-body"><table class="auto-table"><thead><tr><th>Item</th><th>Result</th><th>What was found</th><th></th></tr></thead><tbody>${rows}</tbody></table></div></div>
+    <div class="card"><div class="card-head"><h3>Changes made to the site</h3><span class="hint">each one stores what it replaced — Revert puts it back</span></div>
+      <div class="card-body"><table class="auto-table"><thead><tr><th>Change</th><th>Status</th><th>Item · when</th><th></th></tr></thead><tbody>${opRows}</tbody></table></div></div>`;
 }
 
 async function runScan(siteId, checks = []) {
@@ -947,6 +1032,22 @@ $('#ai-form').addEventListener('submit', async e => {
 async function clearAiKey() {
   if (!confirm('Remove the stored API key? Reviews will fall back to the server environment key, if any.')) return;
   try { ui.ai = await api('PUT', '/ai/settings', { provider: $('#ai-provider').value, model: $('#ai-model').value.trim(), autoApply: $('#ai-auto-apply').checked, apiKey: '' }); $('#count-ai').hidden = ui.ai.configured; render(); toast('Stored key removed.'); } catch { /* toasted */ }
+}
+
+async function setAutoApply(on) {
+  if (!ui.ai) return;
+  try { ui.ai = await api('PUT', '/ai/settings', { provider: ui.ai.provider, model: ui.ai.model, autoApply: on }); render(); toast(on ? 'Auto-apply on.' : 'Auto-apply off — AI edits now wait for your approval.'); } catch { /* toasted */ }
+}
+/** Re-run the connection test from the Automation tab (picks up a newly installed companion plugin). */
+async function retestConnection(siteId) {
+  const key = 'conntest:' + siteId;
+  ui.busy[key] = true; render();
+  try {
+    const r = await api('POST', `/sites/${siteId}/connection/test`);
+    ui.connection[siteId] = r;
+    toast(r.test.ok ? (r.test.companionPlugin ? 'Connected — companion plugin found.' : 'Connected, but the companion plugin was not found.') : 'Connection problem: ' + r.test.errors.join('; '));
+  } catch { /* toasted */ }
+  finally { delete ui.busy[key]; render(); }
 }
 
 /** One item: run the review, merge the finding, open the diff when edits were proposed. */

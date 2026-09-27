@@ -269,3 +269,27 @@ test('SEO-field fixes need the companion plugin, and an ignored write is never r
   assert.equal(res.applied.length, 0);
   assert.match(res.failed[0].error, /did not return .*companion plugin/);
 });
+
+test('thin-archives covers product brands, and the noindex fix writes to the brand taxonomy', async (t) => {
+  const { planFix, applyPlan } = await import('../api/_lib/fixes.js');
+  const h = await harness(fx => {
+    fx.brands = [
+      { id: 70, name: 'YOUTOTECH', slug: 'youtotech', count: 0, link: '/brand/youtotech/', meta: { rank_math_robots: [] } },
+      { id: 71, name: 'Yuoto', slug: 'yuoto', count: 40, link: '/brand/yuoto/', meta: { rank_math_robots: [] } },
+    ];
+    fx.pagesHtml['/brand/youtotech/'] = { status: 200, body: '<html><head></head><body><h1>YOUTOTECH</h1></body></html>' };
+    fx.pagesHtml['/brand/yuoto/'] = { status: 200, body: '<html><head></head><body><h1>Yuoto</h1></body></html>' };
+  });
+  t.after(() => h.wp.close());
+  const r = await h.run('thin-archives');
+  const brand = r.findings.find(f => f.taxonomy === 'product_brand');
+  assert.ok(brand, 'a thin brand archive is found');
+  assert.equal(brand.id, 70);
+  assert.match(brand.detail, /brand, 0 products/);
+  assert.ok(!r.findings.some(f => f.id === 71), 'a populated brand is not flagged');
+  const plan = await planFix('noindex-thin-archive', { connector: h.connector, site: { companionPlugin: true }, findings: [brand] });
+  assert.equal(plan.ops[0].target.type, 'product_brand');
+  const res = await applyPlan({ connector: h.connector, site: {}, plan });
+  assert.equal(res.applied.length, 1, JSON.stringify(res.failed));
+  assert.deepEqual(h.wp.state.brands.find(b => b.id === 70).meta.rank_math_robots, ['noindex', 'follow']);
+});

@@ -96,13 +96,14 @@ export async function startMockWp(fixture = defaultFixture()) {
     if (p === '/wp-json/wp/v2/pages') return paged(state.pages);
     if (p === '/wp-json/wp/v2/media') return paged(state.media);
     if (p === '/wp-json/wp/v2/categories') return paged(state.categories);
+    if (p === '/wp-json/wp/v2/product_brand') return state.brands ? paged(state.brands) : send(404, { code: 'rest_no_route', message: 'No route' });
     if (p === '/wp-json/wp/v2/settings') {
       if (req.method === 'POST') { Object.assign(state.settings, body); return send(200, state.settings); }
       return send(200, state.settings);
     }
     let m;
-    if ((m = p.match(/^\/wp-json\/wp\/v2\/(posts|pages|media|users|categories)\/(\d+)$/))) {
-      const coll = { posts: state.posts, pages: state.pages, media: state.media, users: state.users, categories: state.categories }[m[1]];
+    if ((m = p.match(/^\/wp-json\/wp\/v2\/(posts|pages|media|users|categories|product_brand)\/(\d+)$/))) {
+      const coll = { posts: state.posts, pages: state.pages, media: state.media, users: state.users, categories: state.categories, product_brand: state.brands || [] }[m[1]];
       const row = coll.find(x => x.id === Number(m[2]));
       if (!row) return send(404, { code: 'rest_post_invalid_id', message: 'Invalid ID.' });
       if (req.method === 'POST') { deepMerge(row, body); return send(200, row); }

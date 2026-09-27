@@ -91,23 +91,23 @@ export const FIXES = {
       requireCompanion(site);
       const key = seoKeys(seoPlugin).robots;
       return [{
-        target: { type: 'categories', id: finding.id, url: finding.url, name: finding.name },
+        target: { type: finding.taxonomy || 'categories', id: finding.id, url: finding.url, name: finding.name },
         field: `meta.${key}`,
         before: [],
         after: ['noindex', 'follow'],
-        describe: `Noindex "${finding.name}" (${finding.count} post${finding.count === 1 ? '' : 's'})`,
+        describe: `Noindex "${finding.name}" (${finding.count} ${finding.unit || 'post'}${finding.count === 1 ? '' : 's'})`,
       }];
     },
     async apply({ connector, op, seoPlugin }) {
       const key = seoKeys(seoPlugin).robots;
-      const row = await connector.updateTerm(op.target.id, { meta: { [key]: op.after } }, 'categories');
+      const row = await connector.updateTerm(op.target.id, { meta: { [key]: op.after } }, op.target.type || 'categories');
       const now = metaOf(row, key);
       const list = Array.isArray(now) ? now : String(now || '').split(/[,\s]+/);
       return { snapshot: { field: op.field, value: op.before }, verify: list.includes('noindex') };
     },
     async revert({ connector, op, seoPlugin }) {
       const key = seoKeys(seoPlugin).robots;
-      await connector.updateTerm(op.target.id, { meta: { [key]: op.snapshot.value } }, 'categories');
+      await connector.updateTerm(op.target.id, { meta: { [key]: op.snapshot.value } }, op.target.type || 'categories');
     },
   },
 
